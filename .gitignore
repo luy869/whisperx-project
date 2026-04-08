@@ -1,0 +1,33 @@
+# AI tools
+.claude/
+.agents/
+.cursor/
+.codex/
+.aidesigner/
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Project-specific
+CLAUDE.md
+PROGRESS.md
+*.m4a
+*.json
+*.txt
+all.py
+main.py
+main copy.py
+voice/
+output/
+JSON/

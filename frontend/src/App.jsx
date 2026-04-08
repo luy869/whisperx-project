@@ -1,0 +1,365 @@
+import { useState, useEffect } from 'react'
+import './App.css'
+import Auth from './Auth'
+import { supabase } from './supabase'
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0')
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0')
+  return `${m}:${s}`
+}
+
+function getSpeakerClass(speaker) {
+  if (!speaker) return 'speaker-0'
+  return speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0' ? 'speaker-0' : 'speaker-1'
+}
+
+function getSpeakerLabel(speaker) {
+  if (!speaker) return '不明'
+  return speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0' ? '面接官' : '応募者'
+}
+
+function App() {
+  // ← フックは全部ここにまとめる（条件分岐より前）
+  const [session, setSession] = useState(undefined)
+  const [file, setFile] = useState(null)
+  const [fileName, setFileName] = useState('')
+  const [result, setResult] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const [analysis, setAnalysis] = useState(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [error, setError] = useState(null)
+  const [numSpeakers, setNumSpeakers] = useState(2)
+  const [transcriptionId, setTranscriptionId] = useState(null)
+  const [history, setHistory] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // フックの後なら条件分岐してOK
+  if (session === undefined) return null
+  if (!session) return <Auth />
+
+  async function upload(withAnalysis = false) {
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('num_speakers', numSpeakers)
+
+    setLoading(true)
+    setResult([])
+    setAnalysis(null)
+    setError(null)
+
+    try {
+      const res = await fetch('http://localhost:8001/transcribe/', {
+        method: 'POST',
+        body: formData,
+      })
+      if (!res.ok) throw new Error(`サーバーエラー: ${res.status}`)
+
+      const data = await res.json()
+      setFileName(data.file_name)
+      setResult(data.segments ?? [])
+
+      // Supabaseに文字起こし結果を保存
+      // .from('transcriptions') = テーブル名
+      // .insert() = 行を追加
+      const { data: saved, error: dbError } = await supabase
+        .from('transcriptions')
+        .insert({
+          user_id: session.user.id,
+          file_name: data.file_name,
+          segments: data.segments,
+        })
+        .select()  // 保存した行を返す（idが必要なため）
+        .single()
+
+      if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
+      setTranscriptionId(saved.id)  // 分析結果の保存時に使う
+
+      if (withAnalysis) {
+        await runAnalysis(data.segments, saved.id)
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      // 成功・失敗どちらでも必ず実行される
+      setLoading(false)
+    }
+  }
+
+  async function runAnalysis(segments, tid = transcriptionId) {
+    setAnalyzing(true)
+    setError(null)
+    try {
+      const res = await fetch('http://localhost:8001/analyze/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segments }),
+      })
+      if (!res.ok) throw new Error(`分析エラー: ${res.status}`)
+
+      const data = await res.json()
+      setAnalysis(data)
+
+      // 分析結果をSupabaseに保存
+      if (tid) {
+        await supabase.from('analyses').insert({
+          transcription_id: tid,
+          good_points: data.good_points,
+          improvements: data.improvements,
+          overall: data.overall,
+        })
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  async function loadHistory() {
+    // transcriptionsとanalysesを結合して取得
+    const { data } = await supabase
+      .from('transcriptions')
+      .select('*, analyses(*)')  // *=全カラム、analyses(*)=関連する分析も一緒に取得
+      .order('created_at', { ascending: false })  // 新しい順
+
+    setHistory(data ?? [])
+    setShowHistory(true)
+  }
+
+  function handleFileChange(e) {
+    const selected = e.target.files[0]
+    if (selected) setFile(selected)
+  }
+
+  function handleDrop(e) {
+    e.preventDefault()
+    setDragOver(false)
+    const dropped = e.dataTransfer.files[0]
+    if (dropped) setFile(dropped)
+  }
+
+  function clearFile(e) {
+    e.stopPropagation()
+    setFile(null)
+  }
+
+  function reset() {
+    setFile(null)
+    setFileName('')
+    setResult([])
+    setAnalysis(null)
+    setShowHistory(false)
+  }
+
+  const showResults = result.length > 0
+
+  // 履歴画面
+  if (showHistory) return (
+    <>
+      <nav className="nav">
+        <div className="nav-logo">
+          <div className="nav-icon">🎙</div>
+          <span className="nav-title">VoiceLens<span>.jp</span></span>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button className="back-btn" onClick={reset}>← 戻る</button>
+        </div>
+      </nav>
+      <div className="transcript" style={{ maxWidth: '800px', margin: '32px auto', padding: '0 32px' }}>
+        <h2 style={{ color: '#f1f5f9', marginBottom: '24px' }}>過去の面接</h2>
+        {history.length === 0 && <p style={{ color: '#475569' }}>履歴がありません</p>}
+        {history.map((item) => (
+          <div
+            key={item.id}
+            className="history-item"
+            style={{ cursor: 'pointer' }}
+            onClick={() => {
+              // クリックしたアイテムの内容を結果画面に読み込む
+              setFileName(item.file_name)
+              setResult(item.segments)
+              setAnalysis(item.analyses?.[0] ?? null)
+              setTranscriptionId(item.id)
+              setShowHistory(false)
+            }}
+          >
+            <div className="history-header">
+              <span className="history-filename">🎵 {item.file_name}</span>
+              <span className="history-date">{new Date(item.created_at).toLocaleDateString('ja-JP')}</span>
+            </div>
+            {item.analyses?.[0] ? (
+              <p className="history-overall">{item.analyses[0].overall}</p>
+            ) : (
+              <p className="history-overall" style={{ color: '#475569' }}>分析なし</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
+  return (
+    <>
+      <nav className="nav">
+        <div className="nav-logo">
+          <div className="nav-icon">🎙</div>
+          <span className="nav-title">VoiceLens<span>.jp</span></span>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '12px', color: '#475569' }}>{session.user.email}</span>
+          <button className="back-btn" onClick={loadHistory}>履歴</button>
+          <button className="back-btn" onClick={() => supabase.auth.signOut()}>ログアウト</button>
+        </div>
+      </nav>
+
+      {!showResults ? (
+        <div className="upload-view">
+          <div className="upload-card">
+            <h1>音声ファイルをアップロード</h1>
+            <p>M4A, MP3, WAV フォーマット対応</p>
+
+            <div className="speakers-select">
+              <label>話者数</label>
+              <div className="speakers-btns">
+                {[2, 3, 4].map(n => (
+                  <button
+                    key={n}
+                    className={`speaker-num-btn ${numSpeakers === n ? 'active' : ''}`}
+                    onClick={() => setNumSpeakers(n)}
+                  >
+                    {n}人
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div
+              className={`dropzone ${dragOver ? 'drag-over' : ''} ${file ? 'has-file' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+            >
+              {file ? (
+                <div className="dropzone-selected">
+                  <span className="file-icon">🎵</span>
+                  <span className="file-name">{file.name}</span>
+                  <button className="clear-btn" onClick={clearFile}>✕</button>
+                </div>
+              ) : (
+                <>
+                  <div className="dropzone-icon">☁</div>
+                  <span className="dropzone-label">クリックしてファイルを選択</span>
+                  <span className="dropzone-sub">またはドラッグ＆ドロップ</span>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    className="file-input"
+                    onChange={handleFileChange}
+                  />
+                </>
+              )}
+            </div>
+
+            {error && <p className="error-msg">{error}</p>}
+            <div className="btn-group">
+              <button
+                className={`submit-btn ${loading ? 'loading' : file ? 'active' : ''}`}
+                onClick={() => upload(false)}
+                disabled={!file || loading}
+              >
+                {loading ? (
+                  <><div className="spinner" />解析中...</>
+                ) : (
+                  '文字起こしのみ'
+                )}
+              </button>
+              <button
+                className={`submit-btn analyze ${loading ? 'loading' : file ? 'active-analyze' : ''}`}
+                onClick={() => upload(true)}
+                disabled={!file || loading}
+              >
+                {loading ? (
+                  <><div className="spinner" />解析中...</>
+                ) : (
+                  '文字起こし + 分析'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="results-view">
+          <div className="results-header">
+            <button className="back-btn" onClick={reset}>← 戻る</button>
+            <h2><span className="file-icon">🎵</span>{fileName}</h2>
+          </div>
+
+          <div className="results-body">
+            {/* 分析結果 */}
+            <div className="analysis-panel">
+              {analysis ? (
+                <div className="analysis-result">
+                  <div className="analysis-section good">
+                    <h3>良かった点</h3>
+                    <ul>
+                      {analysis.good_points.map((p, i) => <li key={i}>{p}</li>)}
+                    </ul>
+                  </div>
+                  <div className="analysis-section improve">
+                    <h3>改善点</h3>
+                    <ul>
+                      {analysis.improvements.map((p, i) => <li key={i}>{p}</li>)}
+                    </ul>
+                  </div>
+                  <div className="analysis-section overall">
+                    <h3>総合コメント</h3>
+                    <p>{analysis.overall}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="analysis-empty">
+                  {analyzing ? (
+                    <><div className="spinner" /><span>Geminiが分析中...</span></>
+                  ) : (
+                    <button
+                      className="submit-btn active-analyze"
+                      onClick={() => runAnalysis(result)}
+                    >
+                      面接を分析する
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 文字起こし */}
+            <div className="transcript">
+              {result.map((seg, i) => (
+                <div className="segment-row" key={i}>
+                  <span className="timestamp">{formatTime(seg.start)}</span>
+                  <span className={`speaker-chip ${getSpeakerClass(seg.speaker)}`}>
+                    {getSpeakerLabel(seg.speaker)}
+                  </span>
+                  <span className="segment-text">{seg.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+export default App
