@@ -60,35 +60,57 @@ function App() {
     setError(null)
 
     try {
+      // Step1: アップロード → すぐ job_id が返ってくる（WhisperXはまだ動いてない）
       const res = await fetch('http://localhost:8001/transcribe/', {
         method: 'POST',
         body: formData,
       })
       if (!res.ok) throw new Error(`サーバーエラー: ${res.status}`)
 
-      const data = await res.json()
-      setFileName(data.file_name)
-      setResult(data.segments ?? [])
+      const { job_id } = await res.json()
 
-      // Supabaseに文字起こし結果を保存
-      // .from('transcriptions') = テーブル名
-      // .insert() = 行を追加
-      const { data: saved, error: dbError } = await supabase
-        .from('transcriptions')
-        .insert({
-          user_id: session.user.id,
-          file_name: data.file_name,
-          segments: data.segments,
-        })
-        .select()  // 保存した行を返す（idが必要なため）
-        .single()
+      // Step2: 2秒ごとにジョブの状態を確認する（ポーリング）
+      await new Promise((resolve, reject) => {
+        const intervalId = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`http://localhost:8001/jobs/${job_id}`)
+            const status = await statusRes.json()
 
-      if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
-      setTranscriptionId(saved.id)  // 分析結果の保存時に使う
+            if (status.status === 'done') {
+              clearInterval(intervalId)  // ポーリング停止
 
-      if (withAnalysis) {
-        await runAnalysis(data.segments, saved.id)
-      }
+              // Step3: 完了したらSupabaseに保存して画面に表示
+              setFileName(status.file_name)
+              setResult(status.segments ?? [])
+
+              const { data: saved, error: dbError } = await supabase
+                .from('transcriptions')
+                .insert({
+                  user_id: session.user.id,
+                  file_name: status.file_name,
+                  segments: status.segments,
+                })
+                .select()
+                .single()
+
+              if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
+              setTranscriptionId(saved.id)
+
+              if (withAnalysis) await runAnalysis(status.segments, saved.id)
+              resolve()  // Promiseを完了させてfinallyに進む
+
+            } else if (status.status === 'error') {
+              clearInterval(intervalId)
+              reject(new Error(`文字起こし処理に失敗しました: ${status.detail}`))
+            }
+            // "processing" の間は何もせず次のインターバルを待つ
+          } catch (e) {
+            clearInterval(intervalId)
+            reject(e)
+          }
+        }, 2000)
+      })
+
     } catch (e) {
       setError(e.message)
     } finally {
