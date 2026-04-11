@@ -30,7 +30,8 @@ function App() {
   const [analysis, setAnalysis] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState(null)
-  const [numSpeakers, setNumSpeakers] = useState(2)
+  const [numSpeakers, setNumSpeakers] = useState(2)   // null=自動, 数値=指定
+  const [customSpeakers, setCustomSpeakers] = useState('')  // 4以上の入力欄
   const [transcriptionId, setTranscriptionId] = useState(null)
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
@@ -52,7 +53,8 @@ function App() {
 
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('num_speakers', numSpeakers)
+    // numSpeakers が null（自動）の場合は送らない → バックエンドがデフォルト（自動検出）で動く
+    if (numSpeakers !== null) formData.append('num_speakers', numSpeakers)
 
     setLoading(true)
     setResult([])
@@ -254,15 +256,31 @@ function App() {
             <div className="speakers-select">
               <label>話者数</label>
               <div className="speakers-btns">
-                {[2, 3, 4].map(n => (
+                <button
+                  className={`speaker-num-btn ${numSpeakers === null ? 'active' : ''}`}
+                  onClick={() => { setNumSpeakers(null); setCustomSpeakers('') }}
+                >自動</button>
+                {[1, 2, 3].map(n => (
                   <button
                     key={n}
                     className={`speaker-num-btn ${numSpeakers === n ? 'active' : ''}`}
-                    onClick={() => setNumSpeakers(n)}
+                    onClick={() => { setNumSpeakers(n); setCustomSpeakers('') }}
                   >
                     {n}人
                   </button>
                 ))}
+                <input
+                  type="number"
+                  min="4"
+                  max="20"
+                  placeholder="4以上"
+                  value={customSpeakers}
+                  onChange={(e) => {
+                    setCustomSpeakers(e.target.value)
+                    setNumSpeakers(e.target.value ? Number(e.target.value) : null)
+                  }}
+                  className={`speaker-num-input ${customSpeakers ? 'active' : ''}`}
+                />
               </div>
             </div>
 

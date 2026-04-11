@@ -128,6 +128,38 @@ body {
   color: #38bdf8;
 }
 
+.speaker-num-input {
+  width: 60px;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #1e293b;
+  color: #64748b;
+  font-size: 13px;
+  outline: none;
+  text-align: center;
+  /* スピナー（上下ボタン）を非表示 */
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+}
+
+.speaker-num-input::-webkit-outer-spin-button,
+.speaker-num-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.speaker-num-input::placeholder {
+  color: #475569;
+  font-size: 11px;
+}
+
+.speaker-num-input.active {
+  background: rgba(56, 189, 248, 0.1);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+}
+
 /* Dropzone */
 .dropzone {
   border: 2px dashed #334155;
