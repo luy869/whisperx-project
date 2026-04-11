@@ -160,6 +160,28 @@ body {
   color: #38bdf8;
 }
 
+.custom-prompt-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: #f1f5f9;
+  font-size: 13px;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.2s;
+  line-height: 1.6;
+}
+
+.custom-prompt-input:focus {
+  border-color: #38bdf8;
+}
+
+.custom-prompt-input::placeholder {
+  color: #475569;
+}
+
 /* Dropzone */
 .dropzone {
   border: 2px dashed #334155;

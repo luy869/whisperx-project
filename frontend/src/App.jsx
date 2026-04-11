@@ -14,13 +14,24 @@ function getSpeakerClass(speaker) {
   return speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0' ? 'speaker-0' : 'speaker-1'
 }
 
-function getSpeakerLabel(speaker) {
+// モードによって話者ラベルを変える
+const SPEAKER_LABELS = {
+  '面接': ['面接官', '応募者'],
+  '営業トーク': ['営業', '顧客'],
+  '会議': ['司会', '参加者'],
+}
+
+function getSpeakerLabel(speaker, mode) {
   if (!speaker) return '不明'
-  return speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0' ? '面接官' : '応募者'
+  const labels = SPEAKER_LABELS[mode] ?? ['話者1', '話者2']
+  const isFirst = speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0'
+  return isFirst ? labels[0] : labels[1]
 }
 
 function App() {
   // ← フックは全部ここにまとめる（条件分岐より前）
+  const [mode, setMode] = useState('面接')       // 選択中のモード                                                                              
+  const [customPrompt, setCustomPrompt] = useState('')  // カスタムの入力テキスト             
   const [session, setSession] = useState(undefined)
   const [file, setFile] = useState(null)
   const [fileName, setFileName] = useState('')
@@ -128,7 +139,7 @@ function App() {
       const res = await fetch('http://localhost:8001/analyze/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments }),
+        body: JSON.stringify({ segments, mode, custom_prompt: customPrompt }),
       })
       if (!res.ok) throw new Error(`分析エラー: ${res.status}`)
 
@@ -284,6 +295,30 @@ function App() {
               </div>
             </div>
 
+            {/* モード選択 */}
+            <div className="speakers-select" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
+              <label>分析モード</label>
+              <div className="speakers-btns" style={{ flexWrap: 'wrap' }}>
+                {['面接', 'プレゼン', '会議', 'カスタム'].map(m => (
+                  <button
+                    key={m}
+                    className={`speaker-num-btn ${mode === m ? 'active' : ''}`}
+                    onClick={() => setMode(m)}
+                  >{m}</button>
+                ))}
+              </div>
+              {/* カスタムモード時だけテキストエリアを表示 */}
+              {mode === 'カスタム' && (
+                <textarea
+                  className="custom-prompt-input"
+                  placeholder={"例：この音声は音楽です。歌詞のテーマと感情表現を分析してください。"}
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  rows={3}
+                />
+              )}
+            </div>
+
             <div
               className={`dropzone ${dragOver ? 'drag-over' : ''} ${file ? 'has-file' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -350,22 +385,45 @@ function App() {
             <div className="analysis-panel">
               {analysis ? (
                 <div className="analysis-result">
-                  <div className="analysis-section good">
-                    <h3>良かった点</h3>
-                    <ul>
-                      {analysis.good_points.map((p, i) => <li key={i}>{p}</li>)}
-                    </ul>
-                  </div>
-                  <div className="analysis-section improve">
-                    <h3>改善点</h3>
-                    <ul>
-                      {analysis.improvements.map((p, i) => <li key={i}>{p}</li>)}
-                    </ul>
-                  </div>
-                  <div className="analysis-section overall">
-                    <h3>総合コメント</h3>
-                    <p>{analysis.overall}</p>
-                  </div>
+                  {/* 会議モード：決定事項・宿題・次回議題 */}
+                  {analysis.decisions && <>
+                    <div className="analysis-section good">
+                      <h3>決定事項</h3>
+                      <ul>{analysis.decisions.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                    </div>
+                    <div className="analysis-section improve">
+                      <h3>宿題・アクション</h3>
+                      <ul>{analysis.action_items.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                    </div>
+                    <div className="analysis-section overall">
+                      <h3>次回議題</h3>
+                      <ul>{analysis.next_agenda.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                    </div>
+                  </>}
+
+                  {/* 面接・プレゼン・スピーチ・営業モード */}
+                  {analysis.good_points && <>
+                    <div className="analysis-section good">
+                      <h3>良かった点</h3>
+                      <ul>{analysis.good_points.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                    </div>
+                    <div className="analysis-section improve">
+                      <h3>改善点</h3>
+                      <ul>{analysis.improvements.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                    </div>
+                    <div className="analysis-section overall">
+                      <h3>総合コメント</h3>
+                      <p>{analysis.overall}</p>
+                    </div>
+                  </>}
+
+                  {/* カスタムモード：overallのみ自由テキスト */}
+                  {!analysis.decisions && !analysis.good_points && (
+                    <div className="analysis-section overall">
+                      <h3>分析結果</h3>
+                      <p>{analysis.overall}</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="analysis-empty">
@@ -376,7 +434,7 @@ function App() {
                       className="submit-btn active-analyze"
                       onClick={() => runAnalysis(result)}
                     >
-                      面接を分析する
+                      {mode}を分析する
                     </button>
                   )}
                 </div>
@@ -389,7 +447,7 @@ function App() {
                 <div className="segment-row" key={i}>
                   <span className="timestamp">{formatTime(seg.start)}</span>
                   <span className={`speaker-chip ${getSpeakerClass(seg.speaker)}`}>
-                    {getSpeakerLabel(seg.speaker)}
+                    {getSpeakerLabel(seg.speaker, mode)}
                   </span>
                   <span className="segment-text">{seg.text}</span>
                 </div>
