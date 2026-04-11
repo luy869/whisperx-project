@@ -175,6 +175,14 @@ function App() {
     URL.revokeObjectURL(url)              // 使い終わったURLを解放
   }
 
+  async function deleteHistory(id) {
+    // analysesを先に削除（transcriptionsへの外部キーがあるため）
+    await supabase.from('analyses').delete().eq('transcription_id', id)
+    await supabase.from('transcriptions').delete().eq('id', id)
+    // stateからも除去して即座に画面を更新（再fetchしなくていい）
+    setHistory(prev => prev.filter(item => item.id !== id))
+  }
+
   async function loadHistory() {
     // transcriptionsとanalysesを結合して取得
     const { data } = await supabase
@@ -244,7 +252,14 @@ function App() {
           >
             <div className="history-header">
               <span className="history-filename">🎵 {item.file_name}</span>
-              <span className="history-date">{new Date(item.created_at).toLocaleDateString('ja-JP')}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span className="history-date">{new Date(item.created_at).toLocaleDateString('ja-JP')}</span>
+                <button
+                  className="clear-btn"
+                  style={{ position: 'static' }}
+                  onClick={(e) => { e.stopPropagation(); deleteHistory(item.id) }}
+                >✕</button>
+              </div>
             </div>
             {item.analyses?.[0] ? (
               <p className="history-overall">{item.analyses[0].overall}</p>
