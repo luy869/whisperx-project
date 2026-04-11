@@ -24,7 +24,7 @@ gemini = genai.Client(api_key=os.getenv("gemini_api_key"))
 print("モデルを読み込んでいます...")
 # vad_onset/offset を低くすることで発話の取りこぼしを防ぐ（デフォルトは約0.5で厳しすぎる）
 vad_options = {"vad_onset": 0.1, "vad_offset": 0.1}
-model = whisperx.load_model("large-v3-turbo", device, compute_type=compute_type, vad_options=vad_options)
+model = whisperx.load_model("large-v3", device, compute_type=compute_type, vad_options=vad_options)
 model_a, metadata = whisperx.load_align_model(language_code="ja", device=device)
 diarize_model = DiarizationPipeline(token=HF_TOKEN, device=device)
 print("モデルの読み込み完了")
@@ -104,6 +104,26 @@ async def get_job(job_id: str):
 
 class AnalyzeRequest(BaseModel):
     segments: list
+    mode: str = "面接"       # モード名
+    custom_prompt: str = ""  # カスタムモード時のユーザー入力
+
+
+# モードごとのプロンプトを辞書で管理
+# if/elifを並べるより追加・変更がしやすい
+PROMPTS = {
+    "面接": (
+        "以下は就職面接の文字起こしです。応募者のパフォーマンスを分析してください。",
+        '{{"good_points": ["良かった点"], "improvements": ["改善点"], "overall": "総合コメント"}}'
+    ),
+    "プレゼン": (
+        "以下はプレゼンテーションの文字起こしです。発表者の話し方・構成・説得力を分析してください。",
+        '{{"good_points": ["良かった点"], "improvements": ["改善点"], "overall": "総合コメント"}}'
+    ),
+    "会議": (
+        "以下は会議の文字起こしです。内容を整理してください。",
+        '{{"decisions": ["決定事項"], "action_items": ["担当者と宿題"], "next_agenda": ["次回議題"]}}'
+    ),
+}
 
 
 @app.post("/analyze/")
@@ -113,25 +133,36 @@ async def analyze(req: AnalyzeRequest, user=Depends(get_current_user)):
         for seg in req.segments
     )
 
-    prompt = f"""以下は就職面接の文字起こしです。応募者のパフォーマンスを分析してください。
+    # カスタムモードはユーザーの入力をそのまま使う（返却形式は自由テキスト）
+    if req.mode == "カスタム":
+        prompt = f"""{req.custom_prompt}
+
+【文字起こし】
+{transcript}
+
+分析結果を日本語で回答してください。JSONではなく読みやすい文章で。"""
+    else:
+        # 定型モードはPROMPTS辞書からプロンプトと返却形式を取得
+        # 未知のモードは面接にフォールバック
+        instruction, json_format = PROMPTS.get(req.mode, PROMPTS["面接"])
+        prompt = f"""{instruction}
 
 {transcript}
 
 以下の形式でJSONのみを返してください（他のテキストは不要）：
-{{
-  "good_points": ["良かった点1", "良かった点2", "良かった点3"],
-  "improvements": ["改善点1", "改善点2", "改善点3"],
-  "overall": "総合コメント（2〜3文）"
-}}"""
+{json_format}"""
 
     try:
         response = gemini.models.generate_content(model="gemma-4-31b-it", contents=prompt)
         text = response.text.strip()
 
-        # コードブロックをregexで確実に除去
+        if req.mode == "カスタム":
+            # カスタムは自由テキストなのでそのまま返す
+            return {"overall": text}
+
+        # 定型モードはJSONとしてパース
         text = re.sub(r"^```(?:json)?\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
-
         analysis = json.loads(text.strip())
     except json.JSONDecodeError:
         raise HTTPException(status_code=502, detail="Gemini APIの応答をパースできませんでした")
