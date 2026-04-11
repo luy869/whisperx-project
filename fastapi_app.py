@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 from google import genai
+from typing import Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -49,14 +50,18 @@ async def get_current_user(authorization: str = Header(None)):
 
 # バックグラウンドで動く関数（エンドポイントではない）
 # def にする理由：別スレッドで動くためイベントループがなく、awaitが使えない
-def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: int):
+def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: Optional[int]):
     jobs[job_id] = {"status": "processing"}
     try:
         audio = whisperx.load_audio(tmp_path)
         # chunk_size=30: 30秒単位で処理することで長い音声の取りこぼしを防ぐ
         result = model.transcribe(audio, batch_size=batch_size, language="ja", chunk_size=30)
         result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-        diarize_segments = diarize_model(audio, min_speakers=num_speakers, max_speakers=num_speakers)
+        # num_speakers が None（自動）の場合は人数指定なしで自動検出
+        if num_speakers is not None:
+            diarize_segments = diarize_model(audio, min_speakers=num_speakers, max_speakers=num_speakers)
+        else:
+            diarize_segments = diarize_model(audio)
         result = whisperx.assign_word_speakers(diarize_segments, result)
         # 成功したら結果をjobs辞書に置く（フロントがポーリングで取りに来る）
         jobs[job_id] = {"status": "done", "file_name": filename, "segments": result["segments"]}
@@ -68,7 +73,7 @@ def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: i
 
 
 @app.post("/transcribe/")
-async def transcribe(file: UploadFile = File(...), num_speakers: int = 2, background_tasks: BackgroundTasks = BackgroundTasks(), user=Depends(get_current_user)):
+async def transcribe(file: UploadFile = File(...), num_speakers: Optional[int] = None, background_tasks: BackgroundTasks = BackgroundTasks(), user=Depends(get_current_user)):
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="サポートされていないファイル形式です")
 
