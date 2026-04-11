@@ -162,6 +162,19 @@ function App() {
     }
   }
 
+  async function download() {
+    const text = result.map(seg =>
+      `[${formatTime(seg.start)}] ${getSpeakerLabel(seg.speaker, mode)}: ${seg.text}`
+    ).join('\n')
+    const blob = new Blob([text], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)  // BlobにURLをつける
+    const a = document.createElement('a') // <a>タグを作る
+    a.href = url
+    a.download = 'result.txt'             // ファイル名
+    a.click()                             // 自動クリック → ダウンロード開始
+    URL.revokeObjectURL(url)              // 使い終わったURLを解放
+  }
+
   async function loadHistory() {
     // transcriptionsとanalysesを結合して取得
     const { data } = await supabase
@@ -376,7 +389,10 @@ function App() {
       ) : (
         <div className="results-view">
           <div className="results-header">
-            <button className="back-btn" onClick={reset}>← 戻る</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button className="back-btn" onClick={reset}>← 戻る</button>
+              <button className="back-btn" onClick={download}>↓ テキスト保存</button>
+            </div>
             <h2><span className="file-icon">🎵</span>{fileName}</h2>
           </div>
 
