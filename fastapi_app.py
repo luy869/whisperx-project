@@ -2,6 +2,7 @@ import tempfile
 import os
 import re
 import json
+import jwt
 from dotenv import load_dotenv
 import whisperx
 from whisperx.diarize import DiarizationPipeline
@@ -18,6 +19,14 @@ compute_type = "float16"
 batch_size = 16
 HF_TOKEN = os.getenv("HF_TOKEN")
 
+# Supabaseの公開鍵をJWKSエンドポイントから取得してキャッシュする
+# HS256（共有シークレット）ではなくES256（非対称鍵）を使うため
+from jwt import PyJWKClient
+_jwks_client = PyJWKClient(
+    f"{os.getenv('SUPABASE_URL')}/auth/v1/.well-known/jwks.json",
+    cache_keys=True,  # 公開鍵はキャッシュして毎回fetchしない
+)
+
 gemini = genai.Client(api_key=os.getenv("gemini_api_key"))
 
 # サーバー起動時にモデルを一度だけロード
@@ -32,9 +41,11 @@ print("モデルの読み込み完了")
 app = FastAPI()
 jobs = {}
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -42,10 +53,26 @@ app.add_middleware(
 ALLOWED_TYPES = {"audio/mpeg", "audio/mp4", "audio/wav", "audio/x-m4a", "audio/aac"}
 
 
-# 認証プレースホルダー
-# Supabase導入時はここでJWTを検証してユーザーIDを返す
+# JWTを検証してユーザーIDを返す
+# Supabaseは新方式でECC (P-256) = ES256で署名したJWTを発行する
+# 公開鍵をJWKSエンドポイントから取得して署名を確認する（共有シークレット不要）
 async def get_current_user(authorization: str = Header(None)):
-    return None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="認証が必要です")
+    token = authorization.removeprefix("Bearer ")
+    try:
+        signing_key = _jwks_client.get_signing_key_from_jwt(token)
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["ES256"],
+            audience="authenticated",  # Supabaseが発行するJWTはaud="authenticated"固定
+        )
+        return payload["sub"]  # sub = ユーザーID（UUID）
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="トークンの有効期限が切れています")
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"無効なトークン: {str(e)}")
 
 
 # バックグラウンドで動く関数（エンドポイントではない）
@@ -126,6 +153,10 @@ PROMPTS = {
     "会議": (
         "以下は会議の文字起こしです。内容を整理してください。",
         '{{"decisions": ["決定事項"], "action_items": ["担当者と宿題"], "next_agenda": ["次回議題"]}}'
+    ),
+    "音楽": (
+        "以下は楽曲の文字起こしです。歌詞のテーマ・感情・印象的なフレーズを分析してください。",
+        '{{"theme": "曲のテーマや主題", "highlights": ["印象的なフレーズや表現"], "mood": "曲の雰囲気・感情表現の特徴", "overall": "総評"}}'
     ),
 }
 
