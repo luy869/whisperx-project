@@ -23,8 +23,11 @@ wheels/
 CLAUDE.md
 PROGRESS.md
 *.m4a
-*.json
-*.txt
+# ルート直下の出力ファイル（WhisperX結果など）
+/*.json
+/*.txt
+.mcp.json
+image.png
 all.py
 main.py
 main copy.py
