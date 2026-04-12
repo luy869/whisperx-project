@@ -59,8 +59,16 @@ function App() {
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
   const [fromHistory, setFromHistory] = useState(false)  // 結果画面が履歴から開かれたか
+  const [needsPasswordUpdate, setNeedsPasswordUpdate] = useState(false)  // 招待リンクからのアクセス
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordError, setPasswordError] = useState(null)
 
   useEffect(() => {
+    // 招待リンクからのアクセスか確認（ハッシュに type=invite が含まれるか）
+    if (window.location.hash.includes('type=invite')) {
+      setNeedsPasswordUpdate(true)
+      window.history.replaceState(null, '', window.location.pathname)  // URLからハッシュを消す
+    }
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
@@ -71,6 +79,47 @@ function App() {
   // フックの後なら条件分岐してOK
   if (session === undefined) return null
   if (!session) return <Auth />
+
+  // 招待リンクから来たユーザーにパスワード設定を求める
+  if (needsPasswordUpdate) return (
+    <div className="upload-view">
+      <div className="upload-card">
+        <h1>パスワードを設定</h1>
+        <p>VoiceLensへようこそ。ログイン用のパスワードを設定してください。</p>
+        {passwordError && <p className="error-msg">{passwordError}</p>}
+        <input
+          className="auth-input"
+          type="password"
+          placeholder="新しいパスワード（6文字以上）"
+          value={newPassword}
+          onChange={e => setNewPassword(e.target.value)}
+          style={{ marginBottom: '12px' }}
+        />
+        <button
+          className={`submit-btn ${newPassword.length >= 6 ? 'active' : ''}`}
+          disabled={newPassword.length < 6}
+          onClick={async () => {
+            const { error } = await supabase.auth.updateUser({ password: newPassword })
+            if (error) {
+              setPasswordError(error.message)
+            } else {
+              setNeedsPasswordUpdate(false)
+              setNewPassword('')
+            }
+          }}
+        >
+          パスワードを保存
+        </button>
+        <button
+          className="back-btn"
+          style={{ marginTop: '8px', width: '100%', textAlign: 'center' }}
+          onClick={() => { setNeedsPasswordUpdate(false); setNewPassword(''); setPasswordError(null) }}
+        >
+          キャンセル
+        </button>
+      </div>
+    </div>
+  )
 
   // 1ファイルを処理してSupabaseに保存する（uploadのループから呼ばれる）
   async function processOneFile(file, withAnalysis) {
@@ -161,13 +210,15 @@ function App() {
       setAnalysis(data)
 
       // 分析結果をSupabaseに保存
+      // raw_data に全データを保存することで、音楽・会議など全モードのデータを保持できる
       if (tid) {
         await supabase.from('analyses').insert({
           transcription_id: tid,
-          good_points: data.good_points,
-          improvements: data.improvements,
-          overall: data.overall,
+          good_points: data.good_points ?? null,
+          improvements: data.improvements ?? null,
+          overall: data.overall ?? null,
           scores: data.scores ?? null,
+          raw_data: data,
         })
       }
     } catch (e) {
@@ -249,7 +300,7 @@ function App() {
         </div>
       </nav>
       <div className="transcript" style={{ maxWidth: '800px', margin: '32px auto', padding: '0 32px' }}>
-        <h2 style={{ color: '#f1f5f9', marginBottom: '24px' }}>過去の面接</h2>
+        <h2 style={{ color: '#f1f5f9', marginBottom: '24px' }}>履歴</h2>
         {history.length === 0 && <p style={{ color: '#475569' }}>履歴がありません</p>}
         {history.map((item) => (
           <div
@@ -265,7 +316,9 @@ function App() {
                 .single()
               setFileName(item.file_name)
               setResult(full?.segments ?? [])
-              setAnalysis(full?.analyses?.[0] ?? null)
+              // raw_dataがあればそちらを優先（音楽・会議など全モードのデータが入っている）
+              const savedAnalysis = full?.analyses?.[0]
+              setAnalysis(savedAnalysis?.raw_data ?? savedAnalysis ?? null)
               setTranscriptionId(item.id)
               setFromHistory(true)   // 履歴から開いたことを記録
               setShowHistory(false)
@@ -303,6 +356,7 @@ function App() {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '12px', color: '#475569' }}>{session.user.email}</span>
           <button className="back-btn" onClick={loadHistory}>履歴</button>
+          <button className="back-btn" onClick={() => { setNeedsPasswordUpdate(true); setNewPassword(''); setPasswordError(null) }}>パスワード変更</button>
           <button className="back-btn" onClick={() => supabase.auth.signOut()}>ログアウト</button>
         </div>
       </nav>
