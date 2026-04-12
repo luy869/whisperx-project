@@ -33,7 +33,8 @@ function App() {
   const [mode, setMode] = useState('面接')       // 選択中のモード                                                                              
   const [customPrompt, setCustomPrompt] = useState('')  // カスタムの入力テキスト             
   const [session, setSession] = useState(undefined)
-  const [file, setFile] = useState(null)
+  const [files, setFiles] = useState([])       // 複数ファイル対応
+  const [progress, setProgress] = useState('')  // 「2/3完了」などの進捗テキスト
   const [fileName, setFileName] = useState('')
   const [result, setResult] = useState([])
   const [loading, setLoading] = useState(false)
@@ -59,76 +60,64 @@ function App() {
   if (session === undefined) return null
   if (!session) return <Auth />
 
-  async function upload(withAnalysis = false) {
-    if (!file) return
-
+  // 1ファイルを処理してSupabaseに保存する（uploadのループから呼ばれる）
+  async function processOneFile(file, withAnalysis) {
     const formData = new FormData()
     formData.append('file', file)
-    // numSpeakers が null（自動）の場合は送らない → バックエンドがデフォルト（自動検出）で動く
     if (numSpeakers !== null) formData.append('num_speakers', numSpeakers)
+
+    const res = await fetch('http://localhost:8001/transcribe/', { method: 'POST', body: formData })
+    if (!res.ok) throw new Error(`サーバーエラー: ${res.status}`)
+    const { job_id } = await res.json()
+
+    await new Promise((resolve, reject) => {
+      const intervalId = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`http://localhost:8001/jobs/${job_id}`)
+          const status = await statusRes.json()
+          if (status.status === 'done') {
+            clearInterval(intervalId)
+            const { data: saved, error: dbError } = await supabase
+              .from('transcriptions')
+              .insert({ user_id: session.user.id, file_name: status.file_name, segments: status.segments })
+              .select().single()
+            if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
+            if (withAnalysis) await runAnalysis(status.segments, saved.id)
+            resolve()
+          } else if (status.status === 'error') {
+            clearInterval(intervalId)
+            reject(new Error(`文字起こし処理に失敗しました: ${status.detail}`))
+          }
+        } catch (e) { clearInterval(intervalId); reject(e) }
+      }, 2000)
+    })
+  }
+
+  async function upload(withAnalysis = false) {
+    if (!files.length) return
 
     setLoading(true)
     setResult([])
     setAnalysis(null)
     setError(null)
+    // 各ファイルの状態を初期化：waiting（待機中）
+    setProgress(files.map(f => ({ name: f.name, status: 'waiting' })))
 
     try {
-      // Step1: アップロード → すぐ job_id が返ってくる（WhisperXはまだ動いてない）
-      const res = await fetch('http://localhost:8001/transcribe/', {
-        method: 'POST',
-        body: formData,
-      })
-      if (!res.ok) throw new Error(`サーバーエラー: ${res.status}`)
-
-      const { job_id } = await res.json()
-
-      // Step2: 2秒ごとにジョブの状態を確認する（ポーリング）
-      await new Promise((resolve, reject) => {
-        const intervalId = setInterval(async () => {
-          try {
-            const statusRes = await fetch(`http://localhost:8001/jobs/${job_id}`)
-            const status = await statusRes.json()
-
-            if (status.status === 'done') {
-              clearInterval(intervalId)  // ポーリング停止
-
-              // Step3: 完了したらSupabaseに保存して画面に表示
-              setFileName(status.file_name)
-              setResult(status.segments ?? [])
-
-              const { data: saved, error: dbError } = await supabase
-                .from('transcriptions')
-                .insert({
-                  user_id: session.user.id,
-                  file_name: status.file_name,
-                  segments: status.segments,
-                })
-                .select()
-                .single()
-
-              if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
-              setTranscriptionId(saved.id)
-
-              if (withAnalysis) await runAnalysis(status.segments, saved.id)
-              resolve()  // Promiseを完了させてfinallyに進む
-
-            } else if (status.status === 'error') {
-              clearInterval(intervalId)
-              reject(new Error(`文字起こし処理に失敗しました: ${status.detail}`))
-            }
-            // "processing" の間は何もせず次のインターバルを待つ
-          } catch (e) {
-            clearInterval(intervalId)
-            reject(e)
-          }
-        }, 2000)
-      })
-
+      for (let i = 0; i < files.length; i++) {
+        // 現在処理中のファイルをprocessingに更新
+        setProgress(prev => prev.map((f, idx) => idx === i ? { ...f, status: 'processing' } : f))
+        await processOneFile(files[i], withAnalysis)
+        // 完了したらdoneに更新
+        setProgress(prev => prev.map((f, idx) => idx === i ? { ...f, status: 'done' } : f))
+      }
+      // 全部終わったら履歴画面へ
+      await loadHistory()
     } catch (e) {
       setError(e.message)
     } finally {
-      // 成功・失敗どちらでも必ず実行される
       setLoading(false)
+      setProgress([])
     }
   }
 
@@ -195,24 +184,22 @@ function App() {
   }
 
   function handleFileChange(e) {
-    const selected = e.target.files[0]
-    if (selected) setFile(selected)
+    setFiles(Array.from(e.target.files))  // 複数ファイルを配列に変換
   }
 
   function handleDrop(e) {
     e.preventDefault()
     setDragOver(false)
-    const dropped = e.dataTransfer.files[0]
-    if (dropped) setFile(dropped)
+    setFiles(Array.from(e.dataTransfer.files))
   }
 
-  function clearFile(e) {
+  function clearFiles(e) {
     e.stopPropagation()
-    setFile(null)
+    setFiles([])
   }
 
   function reset() {
-    setFile(null)
+    setFiles([])
     setFileName('')
     setResult([])
     setAnalysis(null)
@@ -348,25 +335,28 @@ function App() {
             </div>
 
             <div
-              className={`dropzone ${dragOver ? 'drag-over' : ''} ${file ? 'has-file' : ''}`}
+              className={`dropzone ${dragOver ? 'drag-over' : ''} ${files.length ? 'has-file' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
             >
-              {file ? (
+              {files.length ? (
                 <div className="dropzone-selected">
                   <span className="file-icon">🎵</span>
-                  <span className="file-name">{file.name}</span>
-                  <button className="clear-btn" onClick={clearFile}>✕</button>
+                  <span className="file-name">
+                    {files.length === 1 ? files[0].name : `${files.length}件のファイル`}
+                  </span>
+                  <button className="clear-btn" onClick={clearFiles}>✕</button>
                 </div>
               ) : (
                 <>
                   <div className="dropzone-icon">☁</div>
                   <span className="dropzone-label">クリックしてファイルを選択</span>
-                  <span className="dropzone-sub">またはドラッグ＆ドロップ</span>
+                  <span className="dropzone-sub">複数選択可 / ドラッグ＆ドロップ</span>
                   <input
                     type="file"
                     accept="audio/*"
+                    multiple
                     className="file-input"
                     onChange={handleFileChange}
                   />
@@ -374,12 +364,28 @@ function App() {
               )}
             </div>
 
+            {/* 処理中の進捗リスト（A案）*/}
+            {Array.isArray(progress) && progress.length > 0 && (
+              <div style={{ marginBottom: '12px' }}>
+                {progress.map((f, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', fontSize: '13px', color: '#94a3b8' }}>
+                    {f.status === 'done' && <span style={{ color: '#34d399' }}>✓</span>}
+                    {f.status === 'processing' && <div className="spinner" />}
+                    {f.status === 'waiting' && <span style={{ color: '#475569' }}>–</span>}
+                    <span style={{ color: f.status === 'done' ? '#34d399' : f.status === 'processing' ? '#f1f5f9' : '#475569' }}>
+                      {f.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {error && <p className="error-msg">{error}</p>}
             <div className="btn-group">
               <button
-                className={`submit-btn ${loading ? 'loading' : file ? 'active' : ''}`}
+                className={`submit-btn ${loading ? 'loading' : files.length ? 'active' : ''}`}
                 onClick={() => upload(false)}
-                disabled={!file || loading}
+                disabled={!files.length || loading}
               >
                 {loading ? (
                   <><div className="spinner" />解析中...</>
@@ -388,9 +394,9 @@ function App() {
                 )}
               </button>
               <button
-                className={`submit-btn analyze ${loading ? 'loading' : file ? 'active-analyze' : ''}`}
+                className={`submit-btn analyze ${loading ? 'loading' : files.length ? 'active-analyze' : ''}`}
                 onClick={() => upload(true)}
-                disabled={!file || loading}
+                disabled={!files.length || loading}
               >
                 {loading ? (
                   <><div className="spinner" />解析中...</>
