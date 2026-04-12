@@ -3,6 +3,17 @@ import './App.css'
 import Auth from './Auth'
 import { supabase } from './supabase'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL
+
+// 毎回最新のアクセストークンを取得してAuthorizationヘッダーを返す
+// getSession()を使う理由：Supabaseはバックグラウンドでトークンを自動更新するため
+// session.access_tokenをキャッシュすると古いトークンを送る可能性がある
+async function authHeaders() {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('ログインしていません')
+  return { 'Authorization': `Bearer ${session.access_token}` }
+}
+
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
   const s = Math.floor(seconds % 60).toString().padStart(2, '0')
@@ -17,8 +28,8 @@ function getSpeakerClass(speaker) {
 // モードによって話者ラベルを変える
 const SPEAKER_LABELS = {
   '面接': ['面接官', '応募者'],
-  '営業トーク': ['営業', '顧客'],
   '会議': ['司会', '参加者'],
+  '音楽': ['声1', '声2'],
 }
 
 function getSpeakerLabel(speaker, mode) {
@@ -67,14 +78,20 @@ function App() {
     formData.append('file', file)
     if (numSpeakers !== null) formData.append('num_speakers', numSpeakers)
 
-    const res = await fetch('http://localhost:8001/transcribe/', { method: 'POST', body: formData })
+    const res = await fetch(`${API_BASE}/transcribe/`, {
+      method: 'POST',
+      headers: await authHeaders(),  // FormDataのContent-TypeはブラウザがBoundary付きで自動設定するのでここに書かない
+      body: formData,
+    })
     if (!res.ok) throw new Error(`サーバーエラー: ${res.status}`)
     const { job_id } = await res.json()
 
     await new Promise((resolve, reject) => {
       const intervalId = setInterval(async () => {
         try {
-          const statusRes = await fetch(`http://localhost:8001/jobs/${job_id}`)
+          const statusRes = await fetch(`${API_BASE}/jobs/${job_id}`, {
+            headers: await authHeaders(),
+          })
           const status = await statusRes.json()
           if (status.status === 'done') {
             clearInterval(intervalId)
@@ -126,9 +143,12 @@ function App() {
     setAnalyzing(true)
     setError(null)
     try {
-      const res = await fetch('http://localhost:8001/analyze/', {
+      const res = await fetch(`${API_BASE}/analyze/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(await authHeaders()),  // スプレッドでAuthorizationを追加
+        },
         body: JSON.stringify({ segments, mode, custom_prompt: customPrompt }),
       })
       if (!res.ok) throw new Error(`分析エラー: ${res.status}`)
@@ -324,7 +344,7 @@ function App() {
             <div className="speakers-select" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
               <label>分析モード</label>
               <div className="speakers-btns" style={{ flexWrap: 'wrap' }}>
-                {['面接', 'プレゼン', '会議', 'カスタム'].map(m => (
+                {['面接', 'プレゼン', '会議', '音楽', 'カスタム'].map(m => (
                   <button
                     key={m}
                     className={`speaker-num-btn ${mode === m ? 'active' : ''}`}
@@ -458,6 +478,26 @@ function App() {
                     </div>
                   </>}
 
+                  {/* 音楽モード：テーマ・フレーズ・雰囲気・総評 */}
+                  {analysis.theme && <>
+                    <div className="analysis-section scores">
+                      <h3>テーマ</h3>
+                      <p style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.7 }}>{analysis.theme}</p>
+                    </div>
+                    <div className="analysis-section good">
+                      <h3>印象的なフレーズ</h3>
+                      <ul>{analysis.highlights.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                    </div>
+                    <div className="analysis-section improve">
+                      <h3>雰囲気・感情</h3>
+                      <p style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.7 }}>{analysis.mood}</p>
+                    </div>
+                    <div className="analysis-section overall">
+                      <h3>総評</h3>
+                      <p>{analysis.overall}</p>
+                    </div>
+                  </>}
+
                   {/* 面接・プレゼン・スピーチ・営業モード */}
                   {analysis.good_points && <>
                     {/* 項目別スコア（面接・プレゼンのみ） */}
@@ -490,7 +530,7 @@ function App() {
                   </>}
 
                   {/* カスタムモード：overallのみ自由テキスト */}
-                  {!analysis.decisions && !analysis.good_points && (
+                  {!analysis.decisions && !analysis.good_points && !analysis.theme && (
                     <div className="analysis-section overall">
                       <h3>分析結果</h3>
                       <p>{analysis.overall}</p>
@@ -514,7 +554,7 @@ function App() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
                       {/* 結果画面でもモードを選べるようにする */}
                       <div className="speakers-btns" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
-                        {['面接', 'プレゼン', '会議', 'カスタム'].map(m => (
+                        {['面接', 'プレゼン', '会議', '音楽', 'カスタム'].map(m => (
                           <button
                             key={m}
                             className={`speaker-num-btn ${mode === m ? 'active' : ''}`}
