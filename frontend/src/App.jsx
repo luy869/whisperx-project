@@ -47,6 +47,7 @@ function App() {
   const [transcriptionId, setTranscriptionId] = useState(null)
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
+  const [fromHistory, setFromHistory] = useState(false)  // 結果画面が履歴から開かれたか
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -142,6 +143,7 @@ function App() {
           good_points: data.good_points,
           improvements: data.improvements,
           overall: data.overall,
+          scores: data.scores ?? null,
         })
       }
     } catch (e) {
@@ -173,11 +175,12 @@ function App() {
   }
 
   async function loadHistory() {
-    // transcriptionsとanalysesを結合して取得
+    // 一覧表示に必要な列だけ取得（segments=全文字起こしは除く。重くなるため）
+    // analysesも表示に使うoverallとscoresだけ取得
     const { data } = await supabase
       .from('transcriptions')
-      .select('*, analyses(*)')  // *=全カラム、analyses(*)=関連する分析も一緒に取得
-      .order('created_at', { ascending: false })  // 新しい順
+      .select('id, file_name, created_at, analyses(id, overall, scores)')
+      .order('created_at', { ascending: false })
 
     setHistory(data ?? [])
     setShowHistory(true)
@@ -203,6 +206,7 @@ function App() {
     setFileName('')
     setResult([])
     setAnalysis(null)
+    setFromHistory(false)
     setShowHistory(false)
   }
 
@@ -228,12 +232,18 @@ function App() {
             key={item.id}
             className="history-item"
             style={{ cursor: 'pointer' }}
-            onClick={() => {
-              // クリックしたアイテムの内容を結果画面に読み込む
+            onClick={async () => {
+              // 一覧では取得していないsegmentsをクリック時に1件だけ取得
+              const { data: full } = await supabase
+                .from('transcriptions')
+                .select('segments, analyses(*)')
+                .eq('id', item.id)
+                .single()
               setFileName(item.file_name)
-              setResult(item.segments)
-              setAnalysis(item.analyses?.[0] ?? null)
+              setResult(full?.segments ?? [])
+              setAnalysis(full?.analyses?.[0] ?? null)
               setTranscriptionId(item.id)
+              setFromHistory(true)   // 履歴から開いたことを記録
               setShowHistory(false)
             }}
           >
@@ -411,7 +421,17 @@ function App() {
         <div className="results-view">
           <div className="results-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <button className="back-btn" onClick={reset}>← 戻る</button>
+              <button className="back-btn" onClick={() => {
+                if (fromHistory) {
+                  // 履歴から来た場合は履歴一覧に戻る
+                  setResult([])
+                  setAnalysis(null)
+                  setFromHistory(false)
+                  setShowHistory(true)
+                } else {
+                  reset()
+                }
+              }}>← 戻る</button>
               <button className="back-btn" onClick={download}>↓ テキスト保存</button>
             </div>
             <h2><span className="file-icon">🎵</span>{fileName}</h2>
@@ -440,6 +460,21 @@ function App() {
 
                   {/* 面接・プレゼン・スピーチ・営業モード */}
                   {analysis.good_points && <>
+                    {/* 項目別スコア（面接・プレゼンのみ） */}
+                    {analysis.scores && (
+                      <div className="analysis-section scores">
+                        <h3>スコア</h3>
+                        {Object.entries(analysis.scores).map(([key, value]) => (
+                          <div key={key} className="score-row">
+                            <span className="score-label">{key}</span>
+                            <div className="score-bar-bg">
+                              <div className="score-bar-fill" style={{ width: `${value}%` }} />
+                            </div>
+                            <span className="score-value">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="analysis-section good">
                       <h3>良かった点</h3>
                       <ul>{analysis.good_points.map((p, i) => <li key={i}>{p}</li>)}</ul>
@@ -461,18 +496,48 @@ function App() {
                       <p>{analysis.overall}</p>
                     </div>
                   )}
+
+                  {/* 再分析ボタン：analysis=nullにするだけで下のモード選択UIが出る */}
+                  <button
+                    className="back-btn"
+                    style={{ marginTop: '8px', width: '100%', textAlign: 'center' }}
+                    onClick={() => setAnalysis(null)}
+                  >
+                    別のモードで再分析
+                  </button>
                 </div>
               ) : (
                 <div className="analysis-empty">
                   {analyzing ? (
                     <><div className="spinner" /><span>Geminiが分析中...</span></>
                   ) : (
-                    <button
-                      className="submit-btn active-analyze"
-                      onClick={() => runAnalysis(result)}
-                    >
-                      {mode}を分析する
-                    </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
+                      {/* 結果画面でもモードを選べるようにする */}
+                      <div className="speakers-btns" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {['面接', 'プレゼン', '会議', 'カスタム'].map(m => (
+                          <button
+                            key={m}
+                            className={`speaker-num-btn ${mode === m ? 'active' : ''}`}
+                            onClick={() => setMode(m)}
+                          >{m}</button>
+                        ))}
+                      </div>
+                      {mode === 'カスタム' && (
+                        <textarea
+                          className="custom-prompt-input"
+                          placeholder="例：この音声の内容を要約してください。"
+                          value={customPrompt}
+                          onChange={(e) => setCustomPrompt(e.target.value)}
+                          rows={3}
+                        />
+                      )}
+                      <button
+                        className="submit-btn active-analyze"
+                        onClick={() => runAnalysis(result)}
+                      >
+                        {mode}を分析する
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
