@@ -100,6 +100,10 @@ function App() {
               .insert({ user_id: session.user.id, file_name: status.file_name, segments: status.segments })
               .select().single()
             if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
+            // 結果画面で表示できるようにstateを設定（1ファイル時に使う）
+            setFileName(status.file_name)
+            setResult(status.segments)
+            setTranscriptionId(saved.id)
             if (withAnalysis) await runAnalysis(status.segments, saved.id)
             resolve()
           } else if (status.status === 'error') {
@@ -129,8 +133,8 @@ function App() {
         // 完了したらdoneに更新
         setProgress(prev => prev.map((f, idx) => idx === i ? { ...f, status: 'done' } : f))
       }
-      // 全部終わったら履歴画面へ
-      await loadHistory()
+      // 複数ファイルは履歴へ、1ファイルは結果をそのまま表示
+      if (files.length > 1) await loadHistory()
     } catch (e) {
       setError(e.message)
     } finally {
