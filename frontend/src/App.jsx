@@ -90,38 +90,47 @@ function App() {
     <div className="upload-view">
       <div className="upload-card">
         <h1>パスワードを設定</h1>
-        <p>VoiceLensへようこそ。ログイン用のパスワードを設定してください。</p>
-        {passwordError && <p className="error-msg">{passwordError}</p>}
-        <input
-          className="auth-input"
-          type="password"
-          placeholder="新しいパスワード（6文字以上）"
-          value={newPassword}
-          onChange={e => setNewPassword(e.target.value)}
-          style={{ marginBottom: '12px' }}
-        />
-        <button
-          className={`submit-btn ${newPassword.length >= 6 ? 'active' : ''}`}
-          disabled={newPassword.length < 6}
-          onClick={async () => {
-            const { error } = await supabase.auth.updateUser({ password: newPassword })
-            if (error) {
-              setPasswordError(error.message)
-            } else {
-              setNeedsPasswordUpdate(false)
-              setNewPassword('')
-            }
-          }}
-        >
-          パスワードを保存
-        </button>
-        <button
-          className="back-btn"
-          style={{ marginTop: '8px', width: '100%', textAlign: 'center' }}
-          onClick={() => { setNeedsPasswordUpdate(false); setNewPassword(''); setPasswordError(null) }}
-        >
-          キャンセル
-        </button>
+        {!session ? (
+          // 招待トークンの交換が完了するまで待つ（updateUserにはセッションが必要）
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8' }}>
+            <div className="spinner" /><span>認証中...</span>
+          </div>
+        ) : (
+          <>
+            <p>VoiceLensへようこそ。ログイン用のパスワードを設定してください。</p>
+            {passwordError && <p className="error-msg">{passwordError}</p>}
+            <input
+              className="auth-input"
+              type="password"
+              placeholder="新しいパスワード（6文字以上）"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              style={{ marginBottom: '12px' }}
+            />
+            <button
+              className={`submit-btn ${newPassword.length >= 6 ? 'active' : ''}`}
+              disabled={newPassword.length < 6}
+              onClick={async () => {
+                const { error } = await supabase.auth.updateUser({ password: newPassword })
+                if (error) {
+                  setPasswordError(error.message)
+                } else {
+                  setNeedsPasswordUpdate(false)
+                  setNewPassword('')
+                }
+              }}
+            >
+              パスワードを保存
+            </button>
+            <button
+              className="back-btn"
+              style={{ marginTop: '8px', width: '100%', textAlign: 'center' }}
+              onClick={() => { setNeedsPasswordUpdate(false); setNewPassword(''); setPasswordError(null) }}
+            >
+              キャンセル
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
