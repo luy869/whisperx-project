@@ -6,13 +6,10 @@ import { supabase } from './supabase'
 const API_BASE = import.meta.env.VITE_API_BASE_URL
 
 // モジュールロード時（Reactより前）にハッシュを確認する
-// useEffect内で確認すると、Supabaseがハッシュを処理する前にsession=nullになり
-// ログイン画面が先に表示されてしまうため、ここで即座に確定させる
+// ここで確認するだけにとどめ、ハッシュ削除はuseEffectで行う
+// 理由：Supabaseの_initialize()は非同期なので、ここで削除すると
+// Supabaseがハッシュを読む前に消えてしまいトークン交換に失敗する
 const IS_INVITE_FLOW = window.location.hash.includes('type=invite')
-if (IS_INVITE_FLOW) {
-  // 確認したらすぐ消す（Supabaseがトークンを二重処理しないよう）
-  window.history.replaceState(null, '', window.location.pathname)
-}
 
 // 毎回最新のアクセストークンを取得してAuthorizationヘッダーを返す
 // getSession()を使う理由：Supabaseはバックグラウンドでトークンを自動更新するため
@@ -73,6 +70,10 @@ function App() {
   const [passwordError, setPasswordError] = useState(null)
 
   useEffect(() => {
+    // 招待ハッシュをここで削除（Supabaseが先に読んでから消す）
+    if (IS_INVITE_FLOW) {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
