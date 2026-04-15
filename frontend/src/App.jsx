@@ -5,6 +5,15 @@ import { supabase } from './supabase'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
 
+// モジュールロード時（Reactより前）にハッシュを確認する
+// useEffect内で確認すると、Supabaseがハッシュを処理する前にsession=nullになり
+// ログイン画面が先に表示されてしまうため、ここで即座に確定させる
+const IS_INVITE_FLOW = window.location.hash.includes('type=invite')
+if (IS_INVITE_FLOW) {
+  // 確認したらすぐ消す（Supabaseがトークンを二重処理しないよう）
+  window.history.replaceState(null, '', window.location.pathname)
+}
+
 // 毎回最新のアクセストークンを取得してAuthorizationヘッダーを返す
 // getSession()を使う理由：Supabaseはバックグラウンドでトークンを自動更新するため
 // session.access_tokenをキャッシュすると古いトークンを送る可能性がある
@@ -59,16 +68,11 @@ function App() {
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
   const [fromHistory, setFromHistory] = useState(false)  // 結果画面が履歴から開かれたか
-  const [needsPasswordUpdate, setNeedsPasswordUpdate] = useState(false)  // 招待リンクからのアクセス
+  const [needsPasswordUpdate, setNeedsPasswordUpdate] = useState(IS_INVITE_FLOW)  // 招待リンクからのアクセス
   const [newPassword, setNewPassword] = useState('')
   const [passwordError, setPasswordError] = useState(null)
 
   useEffect(() => {
-    // 招待リンクからのアクセスか確認（ハッシュに type=invite が含まれるか）
-    if (window.location.hash.includes('type=invite')) {
-      setNeedsPasswordUpdate(true)
-      window.history.replaceState(null, '', window.location.pathname)  // URLからハッシュを消す
-    }
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
@@ -78,9 +82,10 @@ function App() {
 
   // フックの後なら条件分岐してOK
   if (session === undefined) return null
-  if (!session) return <Auth />
 
   // 招待リンクから来たユーザーにパスワード設定を求める
+  // sessionより先に確認する理由：招待直後はsupabaseのトークン交換が非同期なので
+  // session=nullのまま表示される瞬間があり、後で確認するとログイン画面になってしまう
   if (needsPasswordUpdate) return (
     <div className="upload-view">
       <div className="upload-card">
@@ -120,6 +125,8 @@ function App() {
       </div>
     </div>
   )
+
+  if (!session) return <Auth />
 
   // 1ファイルを処理してSupabaseに保存する（uploadのループから呼ばれる）
   async function processOneFile(file, withAnalysis) {
