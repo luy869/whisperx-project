@@ -5,11 +5,11 @@ import { supabase } from './supabase'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
 
-// モジュールロード時（Reactより前）にハッシュを確認する
-// ここで確認するだけにとどめ、ハッシュ削除はuseEffectで行う
-// 理由：Supabaseの_initialize()は非同期なので、ここで削除すると
-// Supabaseがハッシュを読む前に消えてしまいトークン交換に失敗する
-const IS_INVITE_FLOW = window.location.hash.includes('type=invite')
+// モジュールロード時にハッシュを確認してトークンを抽出する
+// Supabaseの自動URL検知は無効化している（supabase.js参照）ので、
+// ハッシュから取ったトークンをuseEffectで setSession に渡して明示的にセッション化する
+const INVITE_HASH = window.location.hash.includes('type=invite') ? window.location.hash : null
+const IS_INVITE_FLOW = INVITE_HASH !== null
 
 // 毎回最新のアクセストークンを取得してAuthorizationヘッダーを返す
 // getSession()を使う理由：Supabaseはバックグラウンドでトークンを自動更新するため
@@ -70,11 +70,36 @@ function App() {
   const [passwordError, setPasswordError] = useState(null)
 
   useEffect(() => {
-    // 招待ハッシュをここで削除（Supabaseが先に読んでから消す）
-    if (IS_INVITE_FLOW) {
-      window.history.replaceState(null, '', window.location.pathname)
+    async function init() {
+      if (IS_INVITE_FLOW && INVITE_HASH) {
+        // 招待フロー：既存セッションが残っているとupdateUserが既存アカウントに当たってしまう
+        // 必ずsignOutしてから、ハッシュから取ったトークンで招待ユーザーのセッションを作る
+        await supabase.auth.signOut({ scope: 'local' })
+
+        const hashParams = new URLSearchParams(INVITE_HASH.substring(1))
+        const access_token = hashParams.get('access_token')
+        const refresh_token = hashParams.get('refresh_token')
+
+        if (access_token && refresh_token) {
+          const { data, error } = await supabase.auth.setSession({ access_token, refresh_token })
+          if (error) {
+            console.error('招待トークンのセッション化失敗:', error)
+            setSession(null)
+          } else {
+            setSession(data.session)
+          }
+        } else {
+          setSession(null)
+        }
+
+        window.history.replaceState(null, '', window.location.pathname)
+      } else {
+        const { data } = await supabase.auth.getSession()
+        setSession(data.session)
+      }
     }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    init()
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
     })
