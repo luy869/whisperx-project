@@ -28,7 +28,10 @@ function formatTime(seconds) {
 
 function getSpeakerClass(speaker) {
   if (!speaker) return 'speaker-0'
-  return speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0' ? 'speaker-0' : 'speaker-1'
+  // "SPEAKER_00" → 0, "SPEAKER_01" → 1, "SPEAKER_02" → 2 ...
+  const match = speaker.match(/SPEAKER_(\d+)/)
+  const num = match ? parseInt(match[1], 10) : 0
+  return `speaker-${Math.min(num, 4)}`  // speaker-0 〜 speaker-4 の範囲に収める
 }
 
 // モードによって話者ラベルを変える
@@ -40,9 +43,14 @@ const SPEAKER_LABELS = {
 
 function getSpeakerLabel(speaker, mode) {
   if (!speaker) return '不明'
-  const labels = SPEAKER_LABELS[mode] ?? ['話者1', '話者2']
-  const isFirst = speaker === 'SPEAKER_00' || speaker === 'SPEAKER_0'
-  return isFirst ? labels[0] : labels[1]
+  const match = speaker.match(/SPEAKER_(\d+)/)
+  const num = match ? parseInt(match[1], 10) : 0
+  // 2人まではモード別ラベル（面接官/応募者など）、3人目以降は「話者N」
+  if (num <= 1) {
+    const labels = SPEAKER_LABELS[mode] ?? ['話者1', '話者2']
+    return labels[num]
+  }
+  return `話者${num + 1}`
 }
 
 function App() {
@@ -217,6 +225,13 @@ function App() {
 
   async function upload(withAnalysis = false) {
     if (!files.length) return
+
+    // クライアント側でサイズチェック（500MB超はサーバーに送る前に弾く）
+    const oversized = files.find(f => f.size > 500 * 1024 * 1024)
+    if (oversized) {
+      setError(`「${oversized.name}」のサイズが500MBを超えています`)
+      return
+    }
 
     setLoading(true)
     setResult([])

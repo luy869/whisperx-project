@@ -51,6 +51,7 @@ app.add_middleware(
 )
 
 ALLOWED_TYPES = {"audio/mpeg", "audio/mp4", "audio/wav", "audio/x-m4a", "audio/aac"}
+MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 
 
 # JWTを検証してユーザーIDを返す
@@ -105,15 +106,20 @@ async def transcribe(file: UploadFile = File(...), num_speakers: Optional[int] =
         raise HTTPException(status_code=400, detail="サポートされていないファイル形式です")
 
     # ファイルを先に保存する（background関数はawaitできないため、ここで読み込む）
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="ファイルサイズが500MBを超えています")
+
     suffix = os.path.splitext(file.filename)[1] or ".m4a"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
+        tmp.write(content)
         tmp_path = tmp.name
 
     # job_idを生成してすぐ返す
     import uuid
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "pending"}
+    # user_idも保存しておく（/jobs/{job_id}での所有者確認に使う）
+    jobs[job_id] = {"status": "pending", "user_id": user}
 
     # WhisperX処理をバックグラウンドに投げる（ここでは待たない）
     background_tasks.add_task(run_transcription, job_id, tmp_path, file.filename, num_speakers)
@@ -122,11 +128,18 @@ async def transcribe(file: UploadFile = File(...), num_speakers: Optional[int] =
 
 
 @app.get("/jobs/{job_id}")
-async def get_job(job_id: str):
+async def get_job(job_id: str, user=Depends(get_current_user)):
     # フロントが定期的にここを叩いてステータスを確認する
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="ジョブが見つかりません")
-    return jobs[job_id]
+    job = jobs[job_id]
+    # 自分のジョブか確認（他ユーザーのUUIDを推測しても見れないようにする）
+    if job.get("user_id") != user:
+        raise HTTPException(status_code=403, detail="アクセス権がありません")
+    # 完了・エラーのジョブはメモリから削除（返してからクライアントはもう使わないため）
+    if job["status"] in ("done", "error"):
+        jobs.pop(job_id, None)
+    return job
 
 
 class AnalyzeRequest(BaseModel):
