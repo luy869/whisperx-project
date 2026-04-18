@@ -20,6 +20,7 @@ export function ResultsView({
         <h2><span className="file-icon">🎵</span>{fileName}</h2>
       </div>
 
+      {error && <p className="error-msg" style={{ margin: '8px 32px 0' }}>{error}</p>}
       <div className="results-body">
         {/* 分析パネル */}
         <div className="analysis-panel">
