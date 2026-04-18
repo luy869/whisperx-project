@@ -78,8 +78,9 @@ async def get_current_user(authorization: str = Header(None)):
 
 # バックグラウンドで動く関数（エンドポイントではない）
 # def にする理由：別スレッドで動くためイベントループがなく、awaitが使えない
-def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: Optional[int]):
-    jobs[job_id] = {"status": "processing"}
+def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: Optional[int], user_id: str):
+    # user_idを全更新に含める（辞書を丸ごと上書きするとuser_idが消えるため）
+    jobs[job_id] = {"status": "processing", "user_id": user_id}
     try:
         audio = whisperx.load_audio(tmp_path)
         # chunk_size=30: 30秒単位で処理することで長い音声の取りこぼしを防ぐ
@@ -92,10 +93,10 @@ def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: O
             diarize_segments = diarize_model(audio)
         result = whisperx.assign_word_speakers(diarize_segments, result)
         # 成功したら結果をjobs辞書に置く（フロントがポーリングで取りに来る）
-        jobs[job_id] = {"status": "done", "file_name": filename, "segments": result["segments"]}
+        jobs[job_id] = {"status": "done", "file_name": filename, "segments": result["segments"], "user_id": user_id}
     except Exception as e:
         # HTTPExceptionは使えない（HTTPレスポンスと紐づいていないため）
-        jobs[job_id] = {"status": "error", "detail": str(e)}
+        jobs[job_id] = {"status": "error", "detail": str(e), "user_id": user_id}
     finally:
         os.unlink(tmp_path)
 
@@ -122,7 +123,7 @@ async def transcribe(file: UploadFile = File(...), num_speakers: Optional[int] =
     jobs[job_id] = {"status": "pending", "user_id": user}
 
     # WhisperX処理をバックグラウンドに投げる（ここでは待たない）
-    background_tasks.add_task(run_transcription, job_id, tmp_path, file.filename, num_speakers)
+    background_tasks.add_task(run_transcription, job_id, tmp_path, file.filename, num_speakers, user)
 
     return {"job_id": job_id}
 
