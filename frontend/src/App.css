@@ -710,6 +710,63 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* 検索バー */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.search-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: #f1f5f9;
+  font-size: 14px;
+}
+
+.search-input::placeholder {
+  color: #475569;
+}
+
+.search-clear {
+  background: none;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  transition: color 0.2s;
+}
+
+.search-clear:hover {
+  color: #94a3b8;
+}
+
+/* 検索ヒット箇所のハイライト */
+mark.search-highlight {
+  background: rgba(250, 204, 21, 0.3);
+  color: #fde047;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* 検索にマッチしないセグメントを薄く */
+.segment-dimmed {
+  opacity: 0.25;
+}
+
 /* ナビバーのボタン群 */
 .nav-actions {
   margin-left: auto;

@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import Auth from './Auth'
 import { supabase } from './supabase'
+import { NavBar } from './NavBar'
+import { HistoryView } from './HistoryView'
+import { UploadView } from './UploadView'
+import { ResultsView } from './ResultsView'
+import { formatTime, getSpeakerLabel } from './utils'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
 
@@ -20,46 +25,13 @@ async function authHeaders() {
   return { 'Authorization': `Bearer ${session.access_token}` }
 }
 
-function formatTime(seconds) {
-  const m = Math.floor(seconds / 60).toString().padStart(2, '0')
-  const s = Math.floor(seconds % 60).toString().padStart(2, '0')
-  return `${m}:${s}`
-}
-
-function getSpeakerClass(speaker) {
-  if (!speaker) return 'speaker-0'
-  // "SPEAKER_00" → 0, "SPEAKER_01" → 1, "SPEAKER_02" → 2 ...
-  const match = speaker.match(/SPEAKER_(\d+)/)
-  const num = match ? parseInt(match[1], 10) : 0
-  return `speaker-${Math.min(num, 4)}`  // speaker-0 〜 speaker-4 の範囲に収める
-}
-
-// モードによって話者ラベルを変える
-const SPEAKER_LABELS = {
-  '面接': ['面接官', '応募者'],
-  '会議': ['司会', '参加者'],
-  '音楽': ['声1', '声2'],
-}
-
-function getSpeakerLabel(speaker, mode) {
-  if (!speaker) return '不明'
-  const match = speaker.match(/SPEAKER_(\d+)/)
-  const num = match ? parseInt(match[1], 10) : 0
-  // 2人まではモード別ラベル（面接官/応募者など）、3人目以降は「話者N」
-  if (num <= 1) {
-    const labels = SPEAKER_LABELS[mode] ?? ['話者1', '話者2']
-    return labels[num]
-  }
-  return `話者${num + 1}`
-}
-
 function App() {
   // ← フックは全部ここにまとめる（条件分岐より前）
-  const [mode, setMode] = useState('面接')       // 選択中のモード                                                                              
-  const [customPrompt, setCustomPrompt] = useState('')  // カスタムの入力テキスト             
+  const [mode, setMode] = useState('面接')
+  const [customPrompt, setCustomPrompt] = useState('')
   const [session, setSession] = useState(undefined)
-  const [files, setFiles] = useState([])       // 複数ファイル対応
-  const [progress, setProgress] = useState('')  // 「2/3完了」などの進捗テキスト
+  const [files, setFiles] = useState([])
+  const [progress, setProgress] = useState('')
   const [fileName, setFileName] = useState('')
   const [result, setResult] = useState([])
   const [loading, setLoading] = useState(false)
@@ -67,15 +39,16 @@ function App() {
   const [analysis, setAnalysis] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState(null)
-  const [numSpeakers, setNumSpeakers] = useState(2)   // null=自動, 数値=指定
-  const [customSpeakers, setCustomSpeakers] = useState('')  // 4以上の入力欄
+  const [numSpeakers, setNumSpeakers] = useState(2)
+  const [customSpeakers, setCustomSpeakers] = useState('')
   const [transcriptionId, setTranscriptionId] = useState(null)
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
-  const [fromHistory, setFromHistory] = useState(false)  // 結果画面が履歴から開かれたか
-  const [needsPasswordUpdate, setNeedsPasswordUpdate] = useState(IS_INVITE_FLOW)  // 招待リンクからのアクセス
+  const [fromHistory, setFromHistory] = useState(false)
+  const [needsPasswordUpdate, setNeedsPasswordUpdate] = useState(IS_INVITE_FLOW)
   const [newPassword, setNewPassword] = useState('')
   const [passwordError, setPasswordError] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
     async function init() {
@@ -118,14 +91,11 @@ function App() {
   if (session === undefined) return null
 
   // 招待リンクから来たユーザーにパスワード設定を求める
-  // sessionより先に確認する理由：招待直後はsupabaseのトークン交換が非同期なので
-  // session=nullのまま表示される瞬間があり、後で確認するとログイン画面になってしまう
   if (needsPasswordUpdate) return (
     <div className="upload-view">
       <div className="upload-card">
         <h1>パスワードを設定</h1>
         {!session ? (
-          // 招待トークンの交換が完了するまで待つ（updateUserにはセッションが必要）
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8' }}>
             <div className="spinner" /><span>認証中...</span>
           </div>
@@ -171,7 +141,10 @@ function App() {
 
   if (!session) return <Auth />
 
-  // 1ファイルを処理してSupabaseに保存する（uploadのループから呼ばれる）
+  // ============================================================
+  // データ処理関数
+  // ============================================================
+
   async function processOneFile(file, withAnalysis) {
     const formData = new FormData()
     formData.append('file', file)
@@ -179,7 +152,7 @@ function App() {
 
     const res = await fetch(`${API_BASE}/transcribe/`, {
       method: 'POST',
-      headers: await authHeaders(),  // FormDataのContent-TypeはブラウザがBoundary付きで自動設定するのでここに書かない
+      headers: await authHeaders(),
       body: formData,
     })
     if (!res.ok) throw new Error(`サーバーエラー: ${res.status}`)
@@ -190,7 +163,6 @@ function App() {
       const TIMEOUT = 10 * 60 * 1000  // 10分（ミリ秒）
 
       const intervalId = setInterval(async () => {
-        // タイムアウトチェック：startTimeから現在まで何ms経過したか計算
         if (Date.now() - startTime > TIMEOUT) {
           clearInterval(intervalId)
           reject(new Error('処理がタイムアウトしました（10分経過）'))
@@ -208,7 +180,6 @@ function App() {
               .insert({ user_id: session.user.id, file_name: status.file_name, segments: status.segments })
               .select().single()
             if (dbError) throw new Error(`DB保存エラー: ${dbError.message}`)
-            // 結果画面で表示できるようにstateを設定（1ファイル時に使う）
             setFileName(status.file_name)
             setResult(status.segments)
             setTranscriptionId(saved.id)
@@ -226,7 +197,6 @@ function App() {
   async function upload(withAnalysis = false) {
     if (!files.length) return
 
-    // クライアント側でサイズチェック（500MB超はサーバーに送る前に弾く）
     const oversized = files.find(f => f.size > 500 * 1024 * 1024)
     if (oversized) {
       setError(`「${oversized.name}」のサイズが500MBを超えています`)
@@ -237,18 +207,14 @@ function App() {
     setResult([])
     setAnalysis(null)
     setError(null)
-    // 各ファイルの状態を初期化：waiting（待機中）
     setProgress(files.map(f => ({ name: f.name, status: 'waiting' })))
 
     try {
       for (let i = 0; i < files.length; i++) {
-        // 現在処理中のファイルをprocessingに更新
         setProgress(prev => prev.map((f, idx) => idx === i ? { ...f, status: 'processing' } : f))
         await processOneFile(files[i], withAnalysis)
-        // 完了したらdoneに更新
         setProgress(prev => prev.map((f, idx) => idx === i ? { ...f, status: 'done' } : f))
       }
-      // 複数ファイルは履歴へ、1ファイルは結果をそのまま表示
       if (files.length > 1) await loadHistory()
     } catch (e) {
       setError(e.message)
@@ -266,7 +232,7 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(await authHeaders()),  // スプレッドでAuthorizationを追加
+          ...(await authHeaders()),
         },
         body: JSON.stringify({ segments, mode, custom_prompt: customPrompt }),
       })
@@ -275,8 +241,6 @@ function App() {
       const data = await res.json()
       setAnalysis(data)
 
-      // 分析結果をSupabaseに保存
-      // raw_data に全データを保存することで、音楽・会議など全モードのデータを保持できる
       if (tid) {
         await supabase.from('analyses').insert({
           transcription_id: tid,
@@ -294,108 +258,93 @@ function App() {
     }
   }
 
-  async function download() {
+  function download() {
     const text = result.map(seg =>
       `[${formatTime(seg.start)}] ${getSpeakerLabel(seg.speaker, mode)}: ${seg.text}`
     ).join('\n')
     const blob = new Blob([text], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)  // BlobにURLをつける
-    const a = document.createElement('a') // <a>タグを作る
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
     a.href = url
-    a.download = 'result.txt'             // ファイル名
-    a.click()                             // 自動クリック → ダウンロード開始
-    URL.revokeObjectURL(url)              // 使い終わったURLを解放
+    a.download = 'result.txt'
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   function exportMarkdown() {
     const date = new Date().toLocaleDateString('ja-JP')
-    // テンプレートリテラルでMarkdownのヘッダー部分を作る
     let md = `# 音声分析レポート\n**ファイル:** ${fileName}\n**日時:** ${date}\n\n---\n\n`
 
     if (analysis) {
-      // 面接・プレゼンモード（good_pointsがあるか判定）
       if (analysis.good_points) {
         if (analysis.scores) {
-          // Markdownのテーブル形式：| 列1 | 列2 |
           md += `## スコア\n| 項目 | スコア |\n|------|--------|\n`
           Object.entries(analysis.scores).forEach(([key, value]) => {
             md += `| ${key} | ${value}/100 |\n`
           })
           md += '\n'
         }
-        // 配列を「- 項目」形式のリストに変換
         md += `## 良かった点\n${analysis.good_points.map(p => `- ${p}`).join('\n')}\n\n`
         md += `## 改善点\n${analysis.improvements.map(p => `- ${p}`).join('\n')}\n\n`
         md += `## 総合コメント\n${analysis.overall}\n\n`
       } else if (analysis.decisions) {
-        // 会議モード
         md += `## 決定事項\n${analysis.decisions.map(p => `- ${p}`).join('\n')}\n\n`
         md += `## 宿題・アクション\n${analysis.action_items.map(p => `- ${p}`).join('\n')}\n\n`
         md += `## 次回議題\n${analysis.next_agenda.map(p => `- ${p}`).join('\n')}\n\n`
       } else if (analysis.theme) {
-        // 音楽モード
         md += `## テーマ\n${analysis.theme}\n\n`
         md += `## 印象的なフレーズ\n${analysis.highlights.map(p => `- ${p}`).join('\n')}\n\n`
         md += `## 雰囲気・感情\n${analysis.mood}\n\n`
         md += `## 総評\n${analysis.overall}\n\n`
       } else {
-        // カスタムモード
         md += `## 分析結果\n${analysis.overall}\n\n`
       }
       md += '---\n\n'
     }
 
-    // 文字起こしパートを追記
     md += `## 文字起こし\n`
     result.forEach(seg => {
       md += `**[${formatTime(seg.start)}] ${getSpeakerLabel(seg.speaker, mode)}:** ${seg.text}\n\n`
     })
 
-    // download() と同じBlobパターン（拡張子だけ .md に変える）
     const blob = new Blob([md], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    // ファイル名から拡張子を除いて _report.md を付ける
-    // replace(/\.[^.]+$/, '') → 末尾の「.xxx」を削除する正規表現
     a.download = `${fileName.replace(/\.[^.]+$/, '')}_report.md`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   async function deleteHistory(id) {
-    // analysesを先に削除（transcriptionsへの外部キーがあるため）
     await supabase.from('analyses').delete().eq('transcription_id', id)
     await supabase.from('transcriptions').delete().eq('id', id)
-    // stateからも除去して即座に画面を更新（再fetchしなくていい）
     setHistory(prev => prev.filter(item => item.id !== id))
   }
 
   async function loadHistory() {
-    // 一覧表示に必要な列だけ取得（segments=全文字起こしは除く。重くなるため）
-    // analysesも表示に使うoverallとscoresだけ取得
     const { data } = await supabase
       .from('transcriptions')
       .select('id, file_name, created_at, analyses(id, overall, scores)')
       .order('created_at', { ascending: false })
-
     setHistory(data ?? [])
     setShowHistory(true)
   }
 
-  function handleFileChange(e) {
-    setFiles(Array.from(e.target.files))  // 複数ファイルを配列に変換
-  }
-
-  function handleDrop(e) {
-    e.preventDefault()
-    setDragOver(false)
-    setFiles(Array.from(e.dataTransfer.files))
-  }
-
-  function clearFiles(e) {
-    e.stopPropagation()
-    setFiles([])
+  // 履歴アイテムをクリックして詳細を開く
+  async function handleHistorySelect(item) {
+    const { data: full } = await supabase
+      .from('transcriptions')
+      .select('segments, analyses(*)')
+      .eq('id', item.id)
+      .single()
+    setFileName(item.file_name)
+    setResult(full?.segments ?? [])
+    const savedAnalysis = full?.analyses?.[0]
+    setAnalysis(savedAnalysis?.raw_data ?? savedAnalysis ?? null)
+    setTranscriptionId(item.id)
+    setFromHistory(true)
+    setShowHistory(false)
   }
 
   function reset() {
@@ -405,382 +354,70 @@ function App() {
     setAnalysis(null)
     setFromHistory(false)
     setShowHistory(false)
+    setSearchQuery('')
   }
 
-  const showResults = result.length > 0
+  // 結果画面から戻るボタン（履歴から来たか否かで遷移先が変わる）
+  function handleBackFromResults() {
+    if (fromHistory) {
+      setResult([])
+      setAnalysis(null)
+      setFromHistory(false)
+      setShowHistory(true)
+    } else {
+      reset()
+    }
+  }
 
-  // 履歴画面
+  // ============================================================
+  // 画面レンダリング
+  // ============================================================
+
   if (showHistory) return (
-    <>
-      <nav className="nav">
-        <div className="nav-logo">
-          <div className="nav-icon">🎙</div>
-          <span className="nav-title">VoiceLens<span>.jp</span></span>
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button className="back-btn" onClick={reset}>← 戻る</button>
-        </div>
-      </nav>
-      <div className="transcript" style={{ maxWidth: '800px', margin: '32px auto', padding: '0 32px' }}>
-        <h2 style={{ color: '#f1f5f9', marginBottom: '24px' }}>履歴</h2>
-        {history.length === 0 && <p style={{ color: '#475569' }}>履歴がありません</p>}
-        {history.map((item) => (
-          <div
-            key={item.id}
-            className="history-item"
-            style={{ cursor: 'pointer' }}
-            onClick={async () => {
-              // 一覧では取得していないsegmentsをクリック時に1件だけ取得
-              const { data: full } = await supabase
-                .from('transcriptions')
-                .select('segments, analyses(*)')
-                .eq('id', item.id)
-                .single()
-              setFileName(item.file_name)
-              setResult(full?.segments ?? [])
-              // raw_dataがあればそちらを優先（音楽・会議など全モードのデータが入っている）
-              const savedAnalysis = full?.analyses?.[0]
-              setAnalysis(savedAnalysis?.raw_data ?? savedAnalysis ?? null)
-              setTranscriptionId(item.id)
-              setFromHistory(true)   // 履歴から開いたことを記録
-              setShowHistory(false)
-            }}
-          >
-            <div className="history-header">
-              <span className="history-filename">🎵 {item.file_name}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span className="history-date">{new Date(item.created_at).toLocaleDateString('ja-JP')}</span>
-                <button
-                  className="clear-btn"
-                  style={{ position: 'static' }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (window.confirm('この履歴を削除しますか？')) deleteHistory(item.id)
-                  }}
-                >✕</button>
-              </div>
-            </div>
-            {item.analyses?.[0] ? (
-              <p className="history-overall">{item.analyses[0].overall}</p>
-            ) : (
-              <p className="history-overall" style={{ color: '#475569' }}>分析なし</p>
-            )}
-          </div>
-        ))}
-      </div>
-    </>
+    <HistoryView
+      history={history}
+      onSelect={handleHistorySelect}
+      onDelete={deleteHistory}
+      onBack={reset}
+    />
   )
 
   return (
     <>
-      <nav className="nav">
-        <div className="nav-logo">
-          <div className="nav-icon">🎙</div>
-          <span className="nav-title">VoiceLens<span>.jp</span></span>
-        </div>
-        <div className="nav-actions">
-          <span className="nav-email" style={{ fontSize: '12px', color: '#475569' }}>{session.user.email}</span>
-          <button className="back-btn" onClick={loadHistory}>履歴</button>
-          <button className="back-btn" onClick={() => { setNeedsPasswordUpdate(true); setNewPassword(''); setPasswordError(null) }}>パスワード変更</button>
-          <button className="back-btn" onClick={() => supabase.auth.signOut()}>ログアウト</button>
-        </div>
-      </nav>
+      <NavBar
+        email={session.user.email}
+        onHistory={loadHistory}
+        onPasswordChange={() => { setNeedsPasswordUpdate(true); setNewPassword(''); setPasswordError(null) }}
+        onSignOut={() => supabase.auth.signOut()}
+      />
 
-      {!showResults ? (
-        <div className="upload-view">
-          <div className="upload-card">
-            <h1>音声ファイルをアップロード</h1>
-            <p>M4A, MP3, WAV フォーマット対応</p>
-
-            <div className="speakers-select">
-              <label>話者数</label>
-              <div className="speakers-btns">
-                <button
-                  className={`speaker-num-btn ${numSpeakers === null ? 'active' : ''}`}
-                  onClick={() => { setNumSpeakers(null); setCustomSpeakers('') }}
-                >自動</button>
-                {[1, 2, 3].map(n => (
-                  <button
-                    key={n}
-                    className={`speaker-num-btn ${numSpeakers === n ? 'active' : ''}`}
-                    onClick={() => { setNumSpeakers(n); setCustomSpeakers('') }}
-                  >
-                    {n}人
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  min="4"
-                  max="20"
-                  placeholder="4以上"
-                  value={customSpeakers}
-                  onChange={(e) => {
-                    setCustomSpeakers(e.target.value)
-                    setNumSpeakers(e.target.value ? Number(e.target.value) : null)
-                  }}
-                  className={`speaker-num-input ${customSpeakers ? 'active' : ''}`}
-                />
-              </div>
-            </div>
-
-            {/* モード選択 */}
-            <div className="speakers-select" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
-              <label>分析モード</label>
-              <div className="speakers-btns" style={{ flexWrap: 'wrap' }}>
-                {['面接', 'プレゼン', '会議', '音楽', 'カスタム'].map(m => (
-                  <button
-                    key={m}
-                    className={`speaker-num-btn ${mode === m ? 'active' : ''}`}
-                    onClick={() => setMode(m)}
-                  >{m}</button>
-                ))}
-              </div>
-              {/* カスタムモード時だけテキストエリアを表示 */}
-              {mode === 'カスタム' && (
-                <textarea
-                  className="custom-prompt-input"
-                  placeholder={"例：この音声は音楽です。歌詞のテーマと感情表現を分析してください。"}
-                  value={customPrompt}
-                  onChange={(e) => setCustomPrompt(e.target.value)}
-                  rows={3}
-                />
-              )}
-            </div>
-
-            <div
-              className={`dropzone ${dragOver ? 'drag-over' : ''} ${files.length ? 'has-file' : ''}`}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-            >
-              {files.length ? (
-                <div className="dropzone-selected">
-                  <span className="file-icon">🎵</span>
-                  <span className="file-name">
-                    {files.length === 1 ? files[0].name : `${files.length}件のファイル`}
-                  </span>
-                  <button className="clear-btn" onClick={clearFiles}>✕</button>
-                </div>
-              ) : (
-                <>
-                  <div className="dropzone-icon">☁</div>
-                  <span className="dropzone-label">クリックしてファイルを選択</span>
-                  <span className="dropzone-sub">複数選択可 / ドラッグ＆ドロップ</span>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    multiple
-                    className="file-input"
-                    onChange={handleFileChange}
-                  />
-                </>
-              )}
-            </div>
-
-            {/* 処理中の進捗リスト（A案）*/}
-            {Array.isArray(progress) && progress.length > 0 && (
-              <div style={{ marginBottom: '12px' }}>
-                {progress.map((f, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', fontSize: '13px', color: '#94a3b8' }}>
-                    {f.status === 'done' && <span style={{ color: '#34d399' }}>✓</span>}
-                    {f.status === 'processing' && <div className="spinner" />}
-                    {f.status === 'waiting' && <span style={{ color: '#475569' }}>–</span>}
-                    <span style={{ color: f.status === 'done' ? '#34d399' : f.status === 'processing' ? '#f1f5f9' : '#475569' }}>
-                      {f.name}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {error && <p className="error-msg">{error}</p>}
-            <div className="btn-group">
-              <button
-                className={`submit-btn ${loading ? 'loading' : files.length ? 'active' : ''}`}
-                onClick={() => upload(false)}
-                disabled={!files.length || loading}
-              >
-                {loading ? (
-                  <><div className="spinner" />解析中...</>
-                ) : (
-                  '文字起こしのみ'
-                )}
-              </button>
-              <button
-                className={`submit-btn analyze ${loading ? 'loading' : files.length ? 'active-analyze' : ''}`}
-                onClick={() => upload(true)}
-                disabled={!files.length || loading}
-              >
-                {loading ? (
-                  <><div className="spinner" />解析中...</>
-                ) : (
-                  '文字起こし + 分析'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+      {result.length === 0 ? (
+        <UploadView
+          mode={mode} setMode={setMode}
+          customPrompt={customPrompt} setCustomPrompt={setCustomPrompt}
+          numSpeakers={numSpeakers} setNumSpeakers={setNumSpeakers}
+          customSpeakers={customSpeakers} setCustomSpeakers={setCustomSpeakers}
+          files={files} setFiles={setFiles}
+          onFileChange={e => setFiles(Array.from(e.target.files))}
+          onDrop={e => { e.preventDefault(); setDragOver(false); setFiles(Array.from(e.dataTransfer.files)) }}
+          onClearFiles={e => { e.stopPropagation(); setFiles([]) }}
+          dragOver={dragOver} setDragOver={setDragOver}
+          loading={loading} progress={progress} error={error}
+          onUpload={upload}
+        />
       ) : (
-        <div className="results-view">
-          <div className="results-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <button className="back-btn" onClick={() => {
-                if (fromHistory) {
-                  // 履歴から来た場合は履歴一覧に戻る
-                  setResult([])
-                  setAnalysis(null)
-                  setFromHistory(false)
-                  setShowHistory(true)
-                } else {
-                  reset()
-                }
-              }}>← 戻る</button>
-              <button className="back-btn" onClick={download}>↓ テキスト保存</button>
-              <button className="back-btn" onClick={exportMarkdown}>↓ レポート保存</button>
-            </div>
-            <h2><span className="file-icon">🎵</span>{fileName}</h2>
-          </div>
-
-          <div className="results-body">
-            {/* 分析結果 */}
-            <div className="analysis-panel">
-              {analysis ? (
-                <div className="analysis-result">
-                  {/* 会議モード：決定事項・宿題・次回議題 */}
-                  {analysis.decisions && <>
-                    <div className="analysis-section good">
-                      <h3>決定事項</h3>
-                      <ul>{analysis.decisions.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                    </div>
-                    <div className="analysis-section improve">
-                      <h3>宿題・アクション</h3>
-                      <ul>{analysis.action_items.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                    </div>
-                    <div className="analysis-section overall">
-                      <h3>次回議題</h3>
-                      <ul>{analysis.next_agenda.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                    </div>
-                  </>}
-
-                  {/* 音楽モード：テーマ・フレーズ・雰囲気・総評 */}
-                  {analysis.theme && <>
-                    <div className="analysis-section scores">
-                      <h3>テーマ</h3>
-                      <p style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.7 }}>{analysis.theme}</p>
-                    </div>
-                    <div className="analysis-section good">
-                      <h3>印象的なフレーズ</h3>
-                      <ul>{analysis.highlights.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                    </div>
-                    <div className="analysis-section improve">
-                      <h3>雰囲気・感情</h3>
-                      <p style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.7 }}>{analysis.mood}</p>
-                    </div>
-                    <div className="analysis-section overall">
-                      <h3>総評</h3>
-                      <p>{analysis.overall}</p>
-                    </div>
-                  </>}
-
-                  {/* 面接・プレゼン・スピーチ・営業モード */}
-                  {analysis.good_points && <>
-                    {/* 項目別スコア（面接・プレゼンのみ） */}
-                    {analysis.scores && (
-                      <div className="analysis-section scores">
-                        <h3>スコア</h3>
-                        {Object.entries(analysis.scores).map(([key, value]) => (
-                          <div key={key} className="score-row">
-                            <span className="score-label">{key}</span>
-                            <div className="score-bar-bg">
-                              <div className="score-bar-fill" style={{ width: `${value}%` }} />
-                            </div>
-                            <span className="score-value">{value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="analysis-section good">
-                      <h3>良かった点</h3>
-                      <ul>{analysis.good_points.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                    </div>
-                    <div className="analysis-section improve">
-                      <h3>改善点</h3>
-                      <ul>{analysis.improvements.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                    </div>
-                    <div className="analysis-section overall">
-                      <h3>総合コメント</h3>
-                      <p>{analysis.overall}</p>
-                    </div>
-                  </>}
-
-                  {/* カスタムモード：overallのみ自由テキスト */}
-                  {!analysis.decisions && !analysis.good_points && !analysis.theme && (
-                    <div className="analysis-section overall">
-                      <h3>分析結果</h3>
-                      <p>{analysis.overall}</p>
-                    </div>
-                  )}
-
-                  {/* 再分析ボタン：analysis=nullにするだけで下のモード選択UIが出る */}
-                  <button
-                    className="back-btn"
-                    style={{ marginTop: '8px', width: '100%', textAlign: 'center' }}
-                    onClick={() => setAnalysis(null)}
-                  >
-                    別のモードで再分析
-                  </button>
-                </div>
-              ) : (
-                <div className="analysis-empty">
-                  {analyzing ? (
-                    <><div className="spinner" /><span>Geminiが分析中...</span></>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
-                      {/* 結果画面でもモードを選べるようにする */}
-                      <div className="speakers-btns" style={{ flexWrap: 'wrap', justifyContent: 'center' }}>
-                        {['面接', 'プレゼン', '会議', '音楽', 'カスタム'].map(m => (
-                          <button
-                            key={m}
-                            className={`speaker-num-btn ${mode === m ? 'active' : ''}`}
-                            onClick={() => setMode(m)}
-                          >{m}</button>
-                        ))}
-                      </div>
-                      {mode === 'カスタム' && (
-                        <textarea
-                          className="custom-prompt-input"
-                          placeholder="例：この音声の内容を要約してください。"
-                          value={customPrompt}
-                          onChange={(e) => setCustomPrompt(e.target.value)}
-                          rows={3}
-                        />
-                      )}
-                      <button
-                        className="submit-btn active-analyze"
-                        onClick={() => runAnalysis(result)}
-                      >
-                        {mode}を分析する
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 文字起こし */}
-            <div className="transcript">
-              {result.map((seg, i) => (
-                <div className="segment-row" key={i}>
-                  <span className="timestamp">{formatTime(seg.start)}</span>
-                  <span className={`speaker-chip ${getSpeakerClass(seg.speaker)}`}>
-                    {getSpeakerLabel(seg.speaker, mode)}
-                  </span>
-                  <span className="segment-text">{seg.text}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <ResultsView
+          fileName={fileName} result={result} analysis={analysis} analyzing={analyzing}
+          mode={mode} setMode={setMode}
+          customPrompt={customPrompt} setCustomPrompt={setCustomPrompt}
+          searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+          error={error}
+          onBack={handleBackFromResults}
+          onDownload={download}
+          onExportMarkdown={exportMarkdown}
+          onRunAnalysis={() => runAnalysis(result)}
+          onResetAnalysis={() => setAnalysis(null)}
+        />
       )}
     </>
   )
