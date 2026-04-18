@@ -691,3 +691,108 @@ body {
   font-weight: 300;
   letter-spacing: 0.01em;
 }
+
+/* ナビバーのボタン群 */
+.nav-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ============================================================
+   レスポンシブ対応
+   768px 以下：タブレット・スマホ
+   ============================================================ */
+@media (max-width: 768px) {
+  /* ナビバー：高さを自動にして折り返しを許容 */
+  .nav {
+    height: auto;
+    padding: 10px 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* メールアドレスは小さい画面では省略 */
+  .nav-email {
+    display: none;
+  }
+
+  /* ボタン群を折り返す */
+  .nav-actions {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* 結果画面：左右→上下に積み替え */
+  .results-body {
+    flex-direction: column;
+  }
+
+  /* 分析パネル：固定幅・固定高さを解除してフル幅に */
+  .analysis-panel {
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 20px 16px;
+  }
+
+  /* 結果ヘッダーのパディング縮小 */
+  .results-header {
+    padding: 14px 16px 12px;
+  }
+
+  /* セグメント：3列グリッド→2行のブロックに変更
+     1行目：タイムスタンプ＋話者チップ（横並び）
+     2行目：テキスト */
+  .segment-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 0;
+  }
+
+  /* タイムスタンプと話者チップを横並びにまとめる */
+  .segment-row .timestamp,
+  .segment-row .speaker-chip {
+    display: inline;
+  }
+
+  /* 文字起こしエリアのパディング縮小 */
+  .transcript {
+    padding: 16px;
+  }
+
+  /* アップロード画面のパディング縮小 */
+  .upload-view {
+    padding: 16px;
+    align-items: flex-start;
+    padding-top: 24px;
+  }
+}
+
+/* ============================================================
+   480px 以下：小型スマホ
+   ============================================================ */
+@media (max-width: 480px) {
+  .upload-card {
+    padding: 20px 16px;
+  }
+
+  /* モードボタン・話者ボタンを折り返す */
+  .speakers-btns {
+    flex-wrap: wrap;
+  }
+
+  /* フォントサイズを少し縮小 */
+  .segment-text {
+    font-size: 14px;
+  }
+
+  .back-btn {
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+}
