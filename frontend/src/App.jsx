@@ -178,7 +178,16 @@ function App() {
     const { job_id } = await res.json()
 
     await new Promise((resolve, reject) => {
+      const startTime = Date.now()
+      const TIMEOUT = 10 * 60 * 1000  // 10分（ミリ秒）
+
       const intervalId = setInterval(async () => {
+        // タイムアウトチェック：startTimeから現在まで何ms経過したか計算
+        if (Date.now() - startTime > TIMEOUT) {
+          clearInterval(intervalId)
+          reject(new Error('処理がタイムアウトしました（10分経過）'))
+          return
+        }
         try {
           const statusRes = await fetch(`${API_BASE}/jobs/${job_id}`, {
             headers: await authHeaders(),
@@ -429,7 +438,10 @@ function App() {
                 <button
                   className="clear-btn"
                   style={{ position: 'static' }}
-                  onClick={(e) => { e.stopPropagation(); deleteHistory(item.id) }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm('この履歴を削除しますか？')) deleteHistory(item.id)
+                  }}
                 >✕</button>
               </div>
             </div>
@@ -451,8 +463,8 @@ function App() {
           <div className="nav-icon">🎙</div>
           <span className="nav-title">VoiceLens<span>.jp</span></span>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '12px', color: '#475569' }}>{session.user.email}</span>
+        <div className="nav-actions">
+          <span className="nav-email" style={{ fontSize: '12px', color: '#475569' }}>{session.user.email}</span>
           <button className="back-btn" onClick={loadHistory}>履歴</button>
           <button className="back-btn" onClick={() => { setNeedsPasswordUpdate(true); setNewPassword(''); setPasswordError(null) }}>パスワード変更</button>
           <button className="back-btn" onClick={() => supabase.auth.signOut()}>ログアウト</button>
