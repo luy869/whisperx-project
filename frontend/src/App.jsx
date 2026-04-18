@@ -242,7 +242,7 @@ function App() {
       setAnalysis(data)
 
       if (tid) {
-        await supabase.from('analyses').insert({
+        const { error: insertError } = await supabase.from('analyses').insert({
           transcription_id: tid,
           good_points: data.good_points ?? null,
           improvements: data.improvements ?? null,
@@ -250,6 +250,9 @@ function App() {
           scores: data.scores ?? null,
           raw_data: data,
         })
+        if (insertError) throw new Error(`分析の保存に失敗: ${insertError.message}`)
+      } else {
+        console.warn('transcriptionId が null のため分析を保存できませんでした')
       }
     } catch (e) {
       setError(e.message)
