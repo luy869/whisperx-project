@@ -283,6 +283,62 @@ function App() {
     URL.revokeObjectURL(url)              // 使い終わったURLを解放
   }
 
+  function exportMarkdown() {
+    const date = new Date().toLocaleDateString('ja-JP')
+    // テンプレートリテラルでMarkdownのヘッダー部分を作る
+    let md = `# 音声分析レポート\n**ファイル:** ${fileName}\n**日時:** ${date}\n\n---\n\n`
+
+    if (analysis) {
+      // 面接・プレゼンモード（good_pointsがあるか判定）
+      if (analysis.good_points) {
+        if (analysis.scores) {
+          // Markdownのテーブル形式：| 列1 | 列2 |
+          md += `## スコア\n| 項目 | スコア |\n|------|--------|\n`
+          Object.entries(analysis.scores).forEach(([key, value]) => {
+            md += `| ${key} | ${value}/100 |\n`
+          })
+          md += '\n'
+        }
+        // 配列を「- 項目」形式のリストに変換
+        md += `## 良かった点\n${analysis.good_points.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 改善点\n${analysis.improvements.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 総合コメント\n${analysis.overall}\n\n`
+      } else if (analysis.decisions) {
+        // 会議モード
+        md += `## 決定事項\n${analysis.decisions.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 宿題・アクション\n${analysis.action_items.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 次回議題\n${analysis.next_agenda.map(p => `- ${p}`).join('\n')}\n\n`
+      } else if (analysis.theme) {
+        // 音楽モード
+        md += `## テーマ\n${analysis.theme}\n\n`
+        md += `## 印象的なフレーズ\n${analysis.highlights.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 雰囲気・感情\n${analysis.mood}\n\n`
+        md += `## 総評\n${analysis.overall}\n\n`
+      } else {
+        // カスタムモード
+        md += `## 分析結果\n${analysis.overall}\n\n`
+      }
+      md += '---\n\n'
+    }
+
+    // 文字起こしパートを追記
+    md += `## 文字起こし\n`
+    result.forEach(seg => {
+      md += `**[${formatTime(seg.start)}] ${getSpeakerLabel(seg.speaker, mode)}:** ${seg.text}\n\n`
+    })
+
+    // download() と同じBlobパターン（拡張子だけ .md に変える）
+    const blob = new Blob([md], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    // ファイル名から拡張子を除いて _report.md を付ける
+    // replace(/\.[^.]+$/, '') → 末尾の「.xxx」を削除する正規表現
+    a.download = `${fileName.replace(/\.[^.]+$/, '')}_report.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function deleteHistory(id) {
     // analysesを先に削除（transcriptionsへの外部キーがあるため）
     await supabase.from('analyses').delete().eq('transcription_id', id)
@@ -553,6 +609,7 @@ function App() {
                 }
               }}>← 戻る</button>
               <button className="back-btn" onClick={download}>↓ テキスト保存</button>
+              <button className="back-btn" onClick={exportMarkdown}>↓ レポート保存</button>
             </div>
             <h2><span className="file-icon">🎵</span>{fileName}</h2>
           </div>
