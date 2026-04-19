@@ -3,7 +3,7 @@ import { formatTime, getSpeakerClass, getSpeakerLabel, highlightText } from './u
 // 結果画面（分析パネル + 文字起こし）
 export function ResultsView({
   fileName, result, analysis, analyzing,
-  mode, setMode, customPrompt, setCustomPrompt,
+  mode, setMode, customPrompt, setCustomPrompt, defaultPrompt,
   searchQuery, setSearchQuery,
   error,
   onBack, onDownload, onExportMarkdown,
@@ -34,11 +34,11 @@ export function ResultsView({
                 </div>
                 <div className="analysis-section improve">
                   <h3>宿題・アクション</h3>
-                  <ul>{analysis.action_items.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                  <ul>{(analysis.action_items ?? []).map((p, i) => <li key={i}>{p}</li>)}</ul>
                 </div>
                 <div className="analysis-section overall">
                   <h3>次回議題</h3>
-                  <ul>{analysis.next_agenda.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                  <ul>{(analysis.next_agenda ?? []).map((p, i) => <li key={i}>{p}</li>)}</ul>
                 </div>
               </>}
 
@@ -50,11 +50,11 @@ export function ResultsView({
                 </div>
                 <div className="analysis-section good">
                   <h3>印象的なフレーズ</h3>
-                  <ul>{analysis.highlights.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                  <ul>{(analysis.highlights ?? []).map((p, i) => <li key={i}>{p}</li>)}</ul>
                 </div>
                 <div className="analysis-section improve">
                   <h3>雰囲気・感情</h3>
-                  <p style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.7 }}>{analysis.mood}</p>
+                  <p style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.7 }}>{analysis.mood ?? ''}</p>
                 </div>
                 <div className="analysis-section overall">
                   <h3>総評</h3>
@@ -84,7 +84,7 @@ export function ResultsView({
                 </div>
                 <div className="analysis-section improve">
                   <h3>改善点</h3>
-                  <ul>{analysis.improvements.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                  <ul>{(analysis.improvements ?? []).map((p, i) => <li key={i}>{p}</li>)}</ul>
                 </div>
                 <div className="analysis-section overall">
                   <h3>総合コメント</h3>
@@ -123,15 +123,24 @@ export function ResultsView({
                       >{m}</button>
                     ))}
                   </div>
-                  {mode === 'カスタム' && (
+                  <div style={{ position: 'relative', width: '100%' }}>
                     <textarea
                       className="custom-prompt-input"
-                      placeholder="例：この音声の内容を要約してください。"
+                      placeholder={mode === 'カスタム' ? '例：この音声の内容を要約してください。' : '分析の指示を編集できます'}
                       value={customPrompt}
                       onChange={(e) => setCustomPrompt(e.target.value)}
                       rows={3}
                     />
-                  )}
+                    {mode !== 'カスタム' && customPrompt !== defaultPrompt && (
+                      <button
+                        className="back-btn"
+                        style={{ marginTop: '4px', fontSize: '11px' }}
+                        onClick={() => setCustomPrompt(defaultPrompt)}
+                      >
+                        デフォルトに戻す
+                      </button>
+                    )}
+                  </div>
                   <button
                     className="submit-btn active-analyze"
                     onClick={onRunAnalysis}
