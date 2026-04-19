@@ -2,6 +2,7 @@ import tempfile
 import os
 import re
 import json
+import uuid
 import jwt
 from dotenv import load_dotenv
 import whisperx
@@ -69,11 +70,14 @@ async def get_current_user(authorization: str = Header(None)):
             algorithms=["ES256"],
             audience="authenticated",  # Supabaseが発行するJWTはaud="authenticated"固定
         )
-        return payload["sub"]  # sub = ユーザーID（UUID）
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="無効なトークン: subクレームがありません")
+        return user_id
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="トークンの有効期限が切れています")
-    except jwt.PyJWTError as e:
-        raise HTTPException(status_code=401, detail=f"無効なトークン: {str(e)}")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="無効なトークンです")
 
 
 # バックグラウンドで動く関数（エンドポイントではない）
@@ -98,13 +102,19 @@ def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: O
         # HTTPExceptionは使えない（HTTPレスポンスと紐づいていないため）
         jobs[job_id] = {"status": "error", "detail": str(e), "user_id": user_id}
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 @app.post("/transcribe/")
 async def transcribe(file: UploadFile = File(...), num_speakers: Optional[int] = None, background_tasks: BackgroundTasks = BackgroundTasks(), user=Depends(get_current_user)):
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="サポートされていないファイル形式です")
+
+    if num_speakers is not None and num_speakers < 1:
+        raise HTTPException(status_code=400, detail="話者数は1以上で指定してください")
 
     # ファイルを先に保存する（background関数はawaitできないため、ここで読み込む）
     content = await file.read()
@@ -117,7 +127,6 @@ async def transcribe(file: UploadFile = File(...), num_speakers: Optional[int] =
         tmp_path = tmp.name
 
     # job_idを生成してすぐ返す
-    import uuid
     job_id = str(uuid.uuid4())
     # user_idも保存しておく（/jobs/{job_id}での所有者確認に使う）
     jobs[job_id] = {"status": "pending", "user_id": user}
@@ -194,6 +203,9 @@ async def analyze(req: AnalyzeRequest, user=Depends(get_current_user)):
         # 定型モードはPROMPTS辞書からプロンプトと返却形式を取得
         # 未知のモードは面接にフォールバック
         instruction, json_format = PROMPTS.get(req.mode, PROMPTS["面接"])
+        # custom_promptがあれば指示文を上書き（JSONの返却形式はそのまま維持）
+        if req.custom_prompt.strip():
+            instruction = req.custom_prompt
         prompt = f"""{instruction}
 
 {transcript}
