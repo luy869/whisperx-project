@@ -1,7 +1,7 @@
 // アップロード画面
 export function UploadView({
   mode, setMode,
-  customPrompt, setCustomPrompt,
+  customPrompt, setCustomPrompt, defaultPrompt,
   numSpeakers, setNumSpeakers,
   customSpeakers, setCustomSpeakers,
   files, onFileChange, onDrop, onClearFiles,
@@ -58,15 +58,24 @@ export function UploadView({
               >{m}</button>
             ))}
           </div>
-          {mode === 'カスタム' && (
+          <div style={{ position: 'relative', width: '100%' }}>
             <textarea
               className="custom-prompt-input"
-              placeholder={"例：この音声は音楽です。歌詞のテーマと感情表現を分析してください。"}
+              placeholder={mode === 'カスタム' ? '例：この音声は音楽です。歌詞のテーマと感情表現を分析してください。' : '分析の指示を編集できます'}
               value={customPrompt}
               onChange={(e) => setCustomPrompt(e.target.value)}
               rows={3}
             />
-          )}
+            {mode !== 'カスタム' && customPrompt !== defaultPrompt && (
+              <button
+                className="back-btn"
+                style={{ marginTop: '4px', fontSize: '11px' }}
+                onClick={() => setCustomPrompt(defaultPrompt)}
+              >
+                デフォルトに戻す
+              </button>
+            )}
+          </div>
         </div>
 
         <div

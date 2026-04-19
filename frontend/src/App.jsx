@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import Auth from './Auth'
 import { supabase } from './supabase'
@@ -6,7 +6,7 @@ import { NavBar } from './NavBar'
 import { HistoryView } from './HistoryView'
 import { UploadView } from './UploadView'
 import { ResultsView } from './ResultsView'
-import { formatTime, getSpeakerLabel } from './utils'
+import { formatTime, getSpeakerLabel, DEFAULT_PROMPTS } from './utils'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
 
@@ -28,7 +28,13 @@ async function authHeaders() {
 function App() {
   // ← フックは全部ここにまとめる（条件分岐より前）
   const [mode, setMode] = useState('面接')
-  const [customPrompt, setCustomPrompt] = useState('')
+  // モードごとに編集内容を保持するオブジェクト（モード切り替えで消えない）
+  const [customPrompts, setCustomPrompts] = useState({})
+  // 現在のモードのプロンプト（未編集ならデフォルト値）
+  const customPrompt = customPrompts[mode] ?? DEFAULT_PROMPTS[mode] ?? ''
+  function setCustomPrompt(val) {
+    setCustomPrompts(prev => ({ ...prev, [mode]: val }))
+  }
   const [session, setSession] = useState(undefined)
   const [files, setFiles] = useState([])
   const [progress, setProgress] = useState('')
@@ -49,6 +55,10 @@ function App() {
   const [newPassword, setNewPassword] = useState('')
   const [passwordError, setPasswordError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
+  // 分析中のtranscription IDを追跡する（非同期リーク防止）
+  const analyzingForIdRef = useRef(null)
+
+
 
   useEffect(() => {
     async function init() {
@@ -225,6 +235,7 @@ function App() {
   }
 
   async function runAnalysis(segments, tid = transcriptionId) {
+    analyzingForIdRef.current = tid
     setAnalyzing(true)
     setError(null)
     try {
@@ -239,9 +250,14 @@ function App() {
       if (!res.ok) throw new Error(`分析エラー: ${res.status}`)
 
       const data = await res.json()
-      setAnalysis(data)
+      // 分析中にユーザーが別の履歴に移動した場合はUIを更新しない
+      if (analyzingForIdRef.current === tid) {
+        setAnalysis(data)
+      }
 
       if (tid) {
+        // 既存の分析を削除してから挿入（再分析で重複レコードができるのを防ぐ）
+        await supabase.from('analyses').delete().eq('transcription_id', tid)
         const { error: insertError } = await supabase.from('analyses').insert({
           transcription_id: tid,
           good_points: data.good_points ?? null,
@@ -255,9 +271,9 @@ function App() {
         console.warn('transcriptionId が null のため分析を保存できませんでした')
       }
     } catch (e) {
-      setError(e.message)
+      if (analyzingForIdRef.current === tid) setError(e.message)
     } finally {
-      setAnalyzing(false)
+      if (analyzingForIdRef.current === tid) setAnalyzing(false)
     }
   }
 
@@ -288,16 +304,16 @@ function App() {
           md += '\n'
         }
         md += `## 良かった点\n${analysis.good_points.map(p => `- ${p}`).join('\n')}\n\n`
-        md += `## 改善点\n${analysis.improvements.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 改善点\n${(analysis.improvements ?? []).map(p => `- ${p}`).join('\n')}\n\n`
         md += `## 総合コメント\n${analysis.overall}\n\n`
       } else if (analysis.decisions) {
         md += `## 決定事項\n${analysis.decisions.map(p => `- ${p}`).join('\n')}\n\n`
-        md += `## 宿題・アクション\n${analysis.action_items.map(p => `- ${p}`).join('\n')}\n\n`
-        md += `## 次回議題\n${analysis.next_agenda.map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 宿題・アクション\n${(analysis.action_items ?? []).map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 次回議題\n${(analysis.next_agenda ?? []).map(p => `- ${p}`).join('\n')}\n\n`
       } else if (analysis.theme) {
         md += `## テーマ\n${analysis.theme}\n\n`
-        md += `## 印象的なフレーズ\n${analysis.highlights.map(p => `- ${p}`).join('\n')}\n\n`
-        md += `## 雰囲気・感情\n${analysis.mood}\n\n`
+        md += `## 印象的なフレーズ\n${(analysis.highlights ?? []).map(p => `- ${p}`).join('\n')}\n\n`
+        md += `## 雰囲気・感情\n${analysis.mood ?? ''}\n\n`
         md += `## 総評\n${analysis.overall}\n\n`
       } else {
         md += `## 分析結果\n${analysis.overall}\n\n`
@@ -336,6 +352,11 @@ function App() {
 
   // 履歴アイテムをクリックして詳細を開く
   async function handleHistorySelect(item) {
+    // 別の分析が走っていてもUIには反映させない
+    analyzingForIdRef.current = null
+    setAnalyzing(false)
+    setError(null)
+
     const { data: full } = await supabase
       .from('transcriptions')
       .select('segments, analyses(*)')
@@ -362,6 +383,8 @@ function App() {
 
   // 結果画面から戻るボタン（履歴から来たか否かで遷移先が変わる）
   function handleBackFromResults() {
+    analyzingForIdRef.current = null
+    setAnalyzing(false)
     if (fromHistory) {
       setResult([])
       setAnalysis(null)
@@ -398,6 +421,7 @@ function App() {
         <UploadView
           mode={mode} setMode={setMode}
           customPrompt={customPrompt} setCustomPrompt={setCustomPrompt}
+          defaultPrompt={DEFAULT_PROMPTS[mode] ?? ''}
           numSpeakers={numSpeakers} setNumSpeakers={setNumSpeakers}
           customSpeakers={customSpeakers} setCustomSpeakers={setCustomSpeakers}
           files={files} setFiles={setFiles}
@@ -413,6 +437,7 @@ function App() {
           fileName={fileName} result={result} analysis={analysis} analyzing={analyzing}
           mode={mode} setMode={setMode}
           customPrompt={customPrompt} setCustomPrompt={setCustomPrompt}
+          defaultPrompt={DEFAULT_PROMPTS[mode] ?? ''}
           searchQuery={searchQuery} setSearchQuery={setSearchQuery}
           error={error}
           onBack={handleBackFromResults}
