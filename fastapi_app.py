@@ -16,8 +16,9 @@ from pydantic import BaseModel
 load_dotenv()
 
 device = "cuda"
-compute_type = "float16"
-batch_size = 16
+# VRAM制約のある環境（CLIPと同じGPUを共有するサーバー等）では .env で int8 に落として使う
+compute_type = os.getenv("WHISPERX_COMPUTE_TYPE", "float16")
+batch_size = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Supabaseの公開鍵をJWKSエンドポイントから取得してキャッシュする
