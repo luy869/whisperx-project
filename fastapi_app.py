@@ -4,6 +4,7 @@ import re
 import json
 import uuid
 import jwt
+import torch
 from dotenv import load_dotenv
 import whisperx
 from whisperx.diarize import DiarizationPipeline
@@ -19,6 +20,8 @@ device = "cuda"
 # VRAM制約のある環境（CLIPと同じGPUを共有するサーバー等）では .env で int8 に落として使う
 compute_type = os.getenv("WHISPERX_COMPUTE_TYPE", "float16")
 batch_size = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))
+# VRAM制約のある環境ではモデルサイズも落とす（large-v3 → medium 等）
+WHISPERX_MODEL = os.getenv("WHISPERX_MODEL", "large-v3")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Supabaseの公開鍵をJWKSエンドポイントから取得してキャッシュする
@@ -31,13 +34,14 @@ _jwks_client = PyJWKClient(
 
 gemini = genai.Client(api_key=os.getenv("gemini_api_key"))
 
-# サーバー起動時にモデルを一度だけロード
+# サーバー起動時はASRモデルのみ一度だけロード（常時使うため常駐させる）
+# align/diarizeモデルはリクエストごとに読み込み・使用後に解放する（run_transcription内）。
+# VRAMが限られた環境（CLIPと同じGPUを共有するサーバー等）では3モデル同時常駐だと
+# 実際の推論時にVRAMが足りなくなるため、ここは常駐させない
 print("モデルを読み込んでいます...")
 # vad_onset/offset を低くすることで発話の取りこぼしを防ぐ（デフォルトは約0.5で厳しすぎる）
 vad_options = {"vad_onset": 0.1, "vad_offset": 0.1}
-model = whisperx.load_model("large-v3", device, compute_type=compute_type, vad_options=vad_options)
-model_a, metadata = whisperx.load_align_model(language_code="ja", device=device)
-diarize_model = DiarizationPipeline(token=HF_TOKEN, device=device)
+model = whisperx.load_model(WHISPERX_MODEL, device, compute_type=compute_type, vad_options=vad_options)
 print("モデルの読み込み完了")
 
 app = FastAPI()
@@ -90,12 +94,22 @@ def run_transcription(job_id: str, tmp_path: str, filename: str, num_speakers: O
         audio = whisperx.load_audio(tmp_path)
         # chunk_size=30: 30秒単位で処理することで長い音声の取りこぼしを防ぐ
         result = model.transcribe(audio, batch_size=batch_size, language="ja", chunk_size=30)
+
+        # align/diarizeモデルはここで読み込み、使い終わったら解放する（常駐させない）
+        model_a, metadata = whisperx.load_align_model(language_code="ja", device=device)
         result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+        del model_a
+        torch.cuda.empty_cache()
+
+        diarize_model = DiarizationPipeline(token=HF_TOKEN, device=device)
         # num_speakers が None（自動）の場合は人数指定なしで自動検出
         if num_speakers is not None:
             diarize_segments = diarize_model(audio, min_speakers=num_speakers, max_speakers=num_speakers)
         else:
             diarize_segments = diarize_model(audio)
+        del diarize_model
+        torch.cuda.empty_cache()
+
         result = whisperx.assign_word_speakers(diarize_segments, result)
         # 成功したら結果をjobs辞書に置く（フロントがポーリングで取りに来る）
         jobs[job_id] = {"status": "done", "file_name": filename, "segments": result["segments"], "user_id": user_id}
