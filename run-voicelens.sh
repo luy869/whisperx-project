@@ -18,4 +18,7 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 PORT="${PORT:-8001}"
 
 echo "Starting VoiceLens backend on GPU index ${CUDA_VISIBLE_DEVICES}, port ${PORT} (Ctrl+C to stop)..."
-exec uv run uvicorn fastapi_app:app --host 127.0.0.1 --port "${PORT}"
+# --no-sync: `uv run` は既定でロックファイルと環境を同期し直すため、これが無いと
+# サーバー限定の torch==2.7.0 上書き（DEPLOY.md参照、GTX 1660 Ti のバグ回避）が
+# 起動のたびに torch==2.8.0 へ静かに戻ってしまう
+exec uv run --no-sync uvicorn fastapi_app:app --host 127.0.0.1 --port "${PORT}"
